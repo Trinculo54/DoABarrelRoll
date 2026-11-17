@@ -74,8 +74,10 @@ UpdateFn o_update;
 std::atomic<bool> g_ready{false};  // the hook is in
 std::atomic<bool> g_flying{false}; // flight is on
 std::atomic<bool> g_fault{false};  // the flight model faulted once (caught): off for the session
-std::atomic<float> g_stick_x{0}, g_stick_y{0}, g_throttle{0}, g_brake{0};
+std::atomic<bool> g_simple{true};  // simple controls (the stick turns) rather than a plane's (the stick rolls)
+std::atomic<float> g_stick_x{0}, g_stick_y{0}, g_throttle{0}, g_brake{0}, g_roll{0};
 wchar_t g_ini[MAX_PATH];
+uint32_t g_vk, g_mods, g_pad; // the flight hotkey, as saved
 
 void logf(const char* fmt, ...) {
     char line[512];
@@ -130,8 +132,9 @@ __attribute__((noinline)) void fly(void* car, float dt) {
     const float* w = reinterpret_cast<const float*>(dyn + DYN_SPIN);
     flight::Body b{{r[0], r[1], r[2]}, {r[4], r[5], r[6]}, {r[8], r[9], r[10]}, {v[0], v[1], v[2]}, {w[0], w[1], w[2]}};
     const flight::Controls in{g_stick_x.load(std::memory_order_relaxed), g_stick_y.load(std::memory_order_relaxed),
-                              g_throttle.load(std::memory_order_relaxed), g_brake.load(std::memory_order_relaxed)};
-    flight::step(b, in, dt);
+                              g_throttle.load(std::memory_order_relaxed), g_brake.load(std::memory_order_relaxed),
+                              g_roll.load(std::memory_order_relaxed)};
+    flight::step(b, in, dt, g_simple.load(std::memory_order_relaxed));
     if (!std::isfinite(b.vel.x + b.vel.y + b.vel.z + b.spin.x + b.spin.y + b.spin.z)) return;
 
     alignas(16) const float nv[4] = {b.vel.x, b.vel.y, b.vel.z, v[3]};
@@ -232,6 +235,9 @@ DWORD WINAPI worker(void*) {
         g_stick_y.store(axis(st.Gamepad.sThumbLY), std::memory_order_relaxed);
         g_throttle.store(st.Gamepad.bRightTrigger / 255.0f, std::memory_order_relaxed);
         g_brake.store(st.Gamepad.bLeftTrigger / 255.0f, std::memory_order_relaxed);
+        const WORD held = st.Gamepad.wButtons;
+        g_roll.store(static_cast<float>(!!(held & XINPUT_GAMEPAD_RIGHT_SHOULDER) - !!(held & XINPUT_GAMEPAD_LEFT_SHOULDER)),
+                     std::memory_order_relaxed);
     }
 }
 
@@ -240,15 +246,29 @@ DWORD WINAPI worker(void*) {
 void on_flight_row(void*, const char*, int value) { set_flying(value != 0, "the Flight row"); }
 void on_hotkey(void*, const char*) { set_flying(!g_flying.load(), "the hotkey"); }
 
-void on_rebind(void*, const char*, uint32_t vk, uint32_t mods, uint32_t pad) {
+// Writes fh2-mods\FlyingCar.ini whole, from what the rows say now. On the UI thread (a row or a binding changed).
+void save_ini() {
     if (FILE* f = _wfopen(g_ini, L"w")) {
-        std::fprintf(f, "[Keys]\n; The key that turns flight on and off, as a Windows key code (120 = F9; 0 = none)\n"
+        std::fprintf(f, "[Flight]\n; 1: simple controls (the stick turns the car, LB and RB roll it). 0: a plane's (the stick rolls)\n"
+                        "Simple=%d\n\n"
+                        "[Keys]\n; The key that turns flight on and off, as a Windows key code (120 = F9; 0 = none)\n"
                         "FlightKey=%u\n; Held with it: 1 Ctrl, 2 Shift, 4 Alt, added together\nFlightModifiers=%u\n"
                         "; The controller buttons, held together, as XInput bits (769 = LB+RB+d-pad up; 0 = none)\n"
                         "FlightPad=%u\n",
-                     vk, mods, pad);
+                     g_simple.load() ? 1 : 0, g_vk, g_mods, g_pad);
         std::fclose(f);
     }
+}
+
+void on_simple_row(void*, const char*, int value) {
+    g_simple.store(value != 0);
+    logf("Simple controls are %s.", value ? "on: the stick turns the car, and LB and RB roll it" : "off: the stick rolls the car, as a plane's does");
+    save_ini();
+}
+
+void on_rebind(void*, const char*, uint32_t vk, uint32_t mods, uint32_t pad) {
+    g_vk = vk, g_mods = mods, g_pad = pad;
+    save_ini();
 }
 
 // fh2-mods\FlyingCar.ini, beside this DLL.
@@ -273,8 +293,8 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     info.version          = MOD_VERSION_STR;
     info.platform_version = FH2MOD_PLATFORM_VERSION;
     info.description      = "Your car flies like a plane. Turn flight on with F9 or LB+RB+d-pad up, get above 144 km/h "
-                            "and pull back on the left stick. Back climbs, forward dives, left and right roll. RT is "
-                            "thrust, LT an air brake. Offline only.";
+                            "and pull back on the left stick. Back climbs, forward dives, left and right turn. RT is "
+                            "thrust, LT an air brake, LB and RB roll. Offline only.";
     info.offline_only     = 1;
     g_mod = api->register_mod(&info);
     if (!g_mod) return 0;
@@ -287,19 +307,34 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     row.size        = sizeof row;
     row.key         = "Flight";
     row.label       = "Flight";
-    row.description = "On: the car flies once it's over 144 km/h. Left stick back climbs, forward dives, left and right "
-                      "roll; RT is thrust, LT an air brake. Starts Off each time the game starts.";
+    row.description = "On: the car flies once it's over 144 km/h. Left stick back climbs, forward dives; RT is thrust, "
+                      "LT an air brake. Starts Off each time the game starts.";
     row.on_change   = &on_flight_row;
     api->add_setting(g_mod, &row);
 
     find_ini();
+    g_simple.store(GetPrivateProfileIntW(L"Flight", L"Simple", 1, g_ini) != 0);
+    FH2Setting simple{};
+    simple.size        = sizeof simple;
+    simple.key         = "Simple";
+    simple.label       = "Simple controls";
+    simple.description = "On: left and right on the stick turn the car. It banks and levels out by itself, and LB and RB "
+                         "roll it for a barrel roll. Off: left and right roll the car, as a plane's stick does, and you "
+                         "turn by rolling and pulling back.";
+    simple.value       = g_simple.load() ? 1 : 0;
+    simple.on_change   = &on_simple_row;
+    api->add_setting(g_mod, &simple);
+
+    g_vk   = GetPrivateProfileIntW(L"Keys", L"FlightKey", VK_F9, g_ini);
+    g_mods = GetPrivateProfileIntW(L"Keys", L"FlightModifiers", 0, g_ini);
+    g_pad  = GetPrivateProfileIntW(L"Keys", L"FlightPad", FH2_PAD_LB | FH2_PAD_RB | FH2_PAD_DPAD_UP, g_ini);
     FH2Hotkey hk{};
     hk.size      = sizeof hk;
     hk.key       = "Flight";
     hk.label     = "Flight on or off";
-    hk.vk        = GetPrivateProfileIntW(L"Keys", L"FlightKey", VK_F9, g_ini);
-    hk.modifiers = GetPrivateProfileIntW(L"Keys", L"FlightModifiers", 0, g_ini);
-    hk.pad_chord = GetPrivateProfileIntW(L"Keys", L"FlightPad", FH2_PAD_LB | FH2_PAD_RB | FH2_PAD_DPAD_UP, g_ini);
+    hk.vk        = g_vk;
+    hk.modifiers = g_mods;
+    hk.pad_chord = g_pad;
     hk.on_press  = &on_hotkey;
     hk.on_rebind = &on_rebind;
     api->add_hotkey(g_mod, &hk);

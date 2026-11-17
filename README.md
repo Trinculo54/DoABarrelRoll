@@ -15,20 +15,26 @@ A mod for Forza Horizon 2 on PC (Azimuth) that lets your car take off and fly li
 |---|---|
 | Left stick back (down) | Nose up: climb, and hold it for a loop |
 | Left stick forward (up) | Nose down: dive |
-| Left stick left or right | Roll: hold it for a barrel roll |
+| Left stick left or right | Turn. The car banks into the turn and levels out when you let go |
+| LB, RB | Roll left, roll right: hold one for a barrel roll |
 | RT | Thrust |
 | LT | Air brake |
 
-The stick works like a plane's, so up is down and down is up. To turn, roll and pull back. Slow down below
-144 km/h and the car starts to sink; below 90 km/h it falls. Turn flight off and it drops like a car again.
+Up is down and down is up, as in a plane. Let go of the stick and the car flies straight and level, the right
+way up. Slow down below 144 km/h and the car starts to sink; below 90 km/h it falls. Turn flight off and it
+drops like a car again.
+
+**Simple controls** (a row on the mod's page, On by default) are the ones above. Turn the row Off for a plane's
+controls: left and right on the stick roll the car instead, nothing levels it for you, and you turn by rolling
+and pulling back.
 
 Flight starts Off each time the game starts. It only ever moves your own car, and it's offline only: the
 platform turns it off when you go online.
 
 ## Settings
 
-On the mod's page: the **Flight** row, and under "Keys and buttons" its key and controller buttons. Changes to
-the key and buttons are saved in `fh2-mods\FlyingCar.ini`.
+On the mod's page: the **Flight** row, the **Simple controls** row, and under "Keys and buttons" the flight key
+and controller buttons. Simple controls and the key and buttons are saved in `fh2-mods\FlyingCar.ini`.
 
 ## Known limits
 
