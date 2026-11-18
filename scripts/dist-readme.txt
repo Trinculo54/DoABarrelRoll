@@ -34,10 +34,11 @@ DWrite.dll, older versions d3dcompiler_47.dll. It loads every mod in
 fh2-mods. Each mod's zip ships the platform it was built with, so extract
 the zip with the newest platform last.
 
-This zip has platform 2.9.0, and Do A Barrel Roll runs on 2.8.0 or newer
-(its pop-ups and its flight HUD need 2.9.0). If platform.log says it "needs FH2 Mod Platform
-2.8.0 or newer", another mod's zip put an older platform back: extract
-this zip again.
+This zip has platform 2.9.1, and Do A Barrel Roll runs on 2.8.0 or newer
+(its pop-ups and the labels HUD need 2.9.0, its flight instruments
+2.9.1). If platform.log says it "needs FH2 Mod Platform 2.8.0 or
+newer", another mod's zip put an older platform back: extract this zip
+again.
 
 
 Flying

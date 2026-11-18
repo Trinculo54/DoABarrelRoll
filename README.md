@@ -18,7 +18,7 @@ It's built on the [FH2 Mod Platform](https://github.com/Trinculo54/fh2-mod-platf
    ```
 3. Start the game.
 
-`d3dcompiler_47.dll` and `DWrite.dll` are the same file: the FH2 Mod Platform 2.9.0. Azimuth 1.0.3 and newer load
+`d3dcompiler_47.dll` and `DWrite.dll` are the same file: the FH2 Mod Platform 2.9.1. Azimuth 1.0.3 and newer load
 `DWrite.dll`, older versions `d3dcompiler_47.dll`. Every mod's zip ships the platform it was built with, so if
 you use other FH2 mods, extract the zip with the newest platform last.
 
