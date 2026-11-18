@@ -132,6 +132,9 @@ comment. `CheckUpdates=0` there stops the check for a newer version on GitHub wh
 - **Controller only in the air.** The keyboard can turn flight on and off, but flying needs a controller.
 - **The key and the buttons for flight only work while you're driving,** not in a menu, the map or photo mode,
   where LB and the d-pad are the menu's own. The Flight row works anywhere.
+- **The hood and bumper cameras stay through a roll.** The game takes those two views to the chase camera
+  whenever a car goes onto its side or roof. With flight on the mod skips that, so a barrel roll or a loop
+  keeps the view you chose. With flight off the game's rule is back.
 - **LB is the game's clutch.** That does nothing in the air, but if you drive manual with clutch, holding LB on
   the ground with flight on still works the clutch.
 - **The triggers are still the car's pedals.** In the air the wheels just spin or stop. On the ground with flight

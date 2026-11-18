@@ -46,6 +46,9 @@ constexpr uintptr_t RVA_DYN_GET_SPIN = 0x12C5C90; // game+0x1412C5C90, slot 0x2B
 constexpr uintptr_t RVA_DYN_GET_ROWS = 0x12CBEB0; // game+0x1412CBEB0, slot 0x2E0: right, up, forward rows at dyn-0x380
 constexpr uintptr_t RVA_DYN_SET_VEL  = 0x12E3CF0; // game+0x1412E3CF0, slot 0x290: SetVelocity(dyn, const float4*)
 constexpr uintptr_t RVA_DYN_SET_SPIN = 0x12DD910; // game+0x1412DD910, slot 0x2C0: SetAngularVelocity(dyn, const float4*)
+constexpr uintptr_t RVA_CAM_ROLLED   = 0x3986A0;  // game+0x1403986A0: ForzaMultiCam's check for a rolled-over car (its table's slot 80)
+constexpr uintptr_t RVA_CAM_VT       = 0x2C6C840; // game+0x142C6C840: ForzaMultiCam's vtable
+constexpr ptrdiff_t CAM_SAVED        = 0x2C8;     // the camera that check took the view from, -1 while it hasn't
 constexpr uintptr_t RVA_SET_CAMERA   = 0xFE5780;  // game+0x140FE5780: CMultiCam::SetActiveCamera(int), for the camera probe
 constexpr ptrdiff_t CAR_DYN = 0x4C08, CAR_KIND = 0x4D08;
 constexpr ptrdiff_t DYN_POS = -0x390, DYN_ROWS = -0x380, DYN_VEL = -0x350, DYN_SPIN = -0x340;
@@ -207,10 +210,49 @@ uint64_t d_update(void* car, float dt, float b, uint64_t d) {
     return r;
 }
 
+// ---- the hood and bumper cameras in a roll -----------------------------------------------------------------------
+
+// The game's camera manager checks the car every frame (ForzaMultiCam, table slot 80). In the hood or bumper camera,
+// once the car's roof points less than 0.1 towards the sky (it's on its side or further over, or nose straight up)
+// the view is taken to the chase camera, and given back a second after the roof is above 0.5 again. That suits a
+// car that has crashed onto its roof, and spoils a barrel roll or a loop. While flight is on the check is skipped,
+// so the camera stays where the player put it; but if the check has already taken the view away it still runs,
+// because all it does then is give the view back. The cockpit camera never had the rule.
+using RolledFn = uint64_t (*)(void* multicam, float dt);
+RolledFn o_rolled;
+
+__attribute__((noinline)) bool view_taken(void* multicam) {
+    return *reinterpret_cast<const int32_t*>(static_cast<const char*>(multicam) + CAM_SAVED) != -1;
+}
+
+uint64_t d_rolled(void* multicam, float dt) {
+    if (g_flying.load(std::memory_order_relaxed)) {
+        bool taken = true;   // if it can't be read, the game's own check runs
+        __try {
+            taken = view_taken(multicam);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        if (!taken) return 0;
+    }
+    return o_rolled(multicam, dt);
+}
+
+// The worker thread, after the flight hook. Without it flight is the same, and the game's rule stands.
+void keep_camera_start() {
+    const bool code = std::memcmp(g_base + RVA_CAM_ROLLED, "\x48\x8B\xC4\x41\x56\x48\x83\xEC\x70\x48\xC7\x40\xA8\xFE\xFF\xFF\xFF", 17) == 0;
+    const bool slot = *reinterpret_cast<char* const*>(g_base + RVA_CAM_VT + 80 * 8) == g_base + RVA_CAM_ROLLED;
+    FH2Hook* h = code && slot ? g_api->hook_function(g_mod, "ForzaMultiCam: rolled-over check", g_base + RVA_CAM_ROLLED,
+                                                     reinterpret_cast<void*>(&d_rolled), reinterpret_cast<void**>(&o_rolled))
+                              : nullptr;
+    if (h && g_api->enable_hooks(g_mod, h)) return;
+    logf("The game's check for a rolled-over car (game+0x%llX) %s, so in the hood and bumper cameras the game still switches to "
+         "the chase camera in a roll; flight is the same.",
+         0x140000000ull + RVA_CAM_ROLLED, code && slot ? "couldn't be hooked" : "isn't as expected");
+}
+
 // ---- the camera probe (only with CameraProbe=1 under [Debug] in the ini) -------------------------------------------
 
-// Something in the game takes the camera out of an in-car view when the car rolls. To find what, this logs each
-// change of the game's camera (CMultiCam::SetActiveCamera, hooked only while the probe is on) with what the car
+// Logs each change of the game's camera (CMultiCam::SetActiveCamera, hooked only while the probe is on) with what the car
 // was doing and the game code the call came from: the return addresses on the stack that point into the game.
 using SetCameraFn = uint64_t (*)(void* multicam, int index);
 SetCameraFn o_set_camera;
@@ -482,6 +524,7 @@ DWORD WINAPI worker(void*) {
         return 0;
     }
     g_ready.store(true);
+    keep_camera_start();
     camera_probe_start();
     logf("Ready: the car's physics checked and hooked. Turn flight on with the Flight row or its hotkey.");
 

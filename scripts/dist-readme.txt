@@ -187,6 +187,10 @@ Good to know
     controller.
   - The key and the buttons for flight only work while you're driving,
     not in a menu, the map or photo mode. The Flight row works anywhere.
+  - The hood and bumper cameras stay through a roll. The game takes
+    those two views to the chase camera whenever a car goes onto its
+    side or roof; with flight on the mod skips that, so a barrel roll
+    or a loop keeps the view you chose.
   - LB is the game's clutch. That does nothing in the air, but if you
     drive manual with clutch, holding LB on the ground with flight on
     still works the clutch.
