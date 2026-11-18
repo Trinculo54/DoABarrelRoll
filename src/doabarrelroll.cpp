@@ -1,4 +1,4 @@
-// Flying Car: the player's car flies like a plane while flight is on (F9, or LB+RB with d-pad up; both can be
+// Do A Barrel Roll: the player's car flies like a plane while flight is on (F9, or LB+RB with d-pad up; both can be
 // changed on the mod's page). src/flight.hpp has the flight model, README.md the controls.
 //
 // One hook, on ForzaCar's per-frame update (fh2game.h). After the game's own update of the player's car, the flight
@@ -79,6 +79,7 @@ std::atomic<float> g_stick_x{0}, g_stick_y{0}, g_throttle{0}, g_brake{0};
 std::atomic<bool> g_roll{false};   // LB is held: the stick rolls
 wchar_t g_ini[MAX_PATH];
 uint32_t g_vk, g_mods, g_pad; // the flight hotkey, as saved
+int g_check_updates = 1;      // CheckUpdates, as saved
 
 void logf(const char* fmt, ...) {
     char line[512];
@@ -164,7 +165,7 @@ bool code_ok() {
     bool ok = true;
     for (const Code& k : kCode)
         if (std::memcmp(g_base + k.rva, k.bytes, k.n) != 0) {
-            logf("The game's code for %s (game+0x%llX) doesn't match this game version; Flying Car is off.", k.what,
+            logf("The game's code for %s (game+0x%llX) doesn't match this game version; Do A Barrel Roll is off.", k.what,
                  0x140000000ull + k.rva);
             ok = false;
         }
@@ -173,7 +174,7 @@ bool code_ok() {
     for (const void* vt : {g_vt_a, g_vt_b})
         for (const Slot& s : kSlots)
             if (*reinterpret_cast<char* const*>(static_cast<const char*>(vt) + s.offset) != g_base + s.rva) {
-                logf("The car physics' table (game+0x%llX, slot 0x%zX) isn't as expected; Flying Car is off.",
+                logf("The car physics' table (game+0x%llX, slot 0x%zX) isn't as expected; Do A Barrel Roll is off.",
                      0x140000000ull + (static_cast<const char*>(vt) - g_base), s.offset);
                 ok = false;
             }
@@ -196,14 +197,14 @@ using XInputGetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
 DWORD WINAPI worker(void*) {
     g_base = static_cast<char*>(g_api->wait_for_code(10 * 60 * 1000));
     if (!g_base) {
-        logf("The game didn't get going within 10 minutes; Flying Car is off.");
+        logf("The game didn't get going within 10 minutes; Do A Barrel Roll is off.");
         return 0;
     }
     if (!code_ok()) return 0;
     FH2Hook* h = g_api->hook_function(g_mod, "ForzaCar::Update", g_base + FH2_GAME_FORZACAR_UPDATE,
                                       reinterpret_cast<void*>(&d_update), reinterpret_cast<void**>(&o_update));
     if (!h || !g_api->enable_hooks(g_mod, h)) {
-        logf("The hook on the car's update couldn't go in (the platform's log says why); Flying Car is off.");
+        logf("The hook on the car's update couldn't go in (the platform's log says why); Do A Barrel Roll is off.");
         return 0;
     }
     g_ready.store(true);
@@ -245,7 +246,7 @@ DWORD WINAPI worker(void*) {
 void on_flight_row(void*, const char*, int value) { set_flying(value != 0, "the Flight row"); }
 void on_hotkey(void*, const char*) { set_flying(!g_flying.load(), "the hotkey"); }
 
-// Writes fh2-mods\FlyingCar.ini whole, from what the rows say now. On the UI thread (a row or a binding changed).
+// Writes fh2-mods\DoABarrelRoll.ini whole, from what the rows say now. On the UI thread (a row or a binding changed).
 void save_ini() {
     if (FILE* f = _wfopen(g_ini, L"w")) {
         std::fprintf(f, "[Flight]\n; 1: simple controls (the stick turns the car; with LB held it rolls). 0: a plane's (the stick rolls)\n"
@@ -253,8 +254,9 @@ void save_ini() {
                         "[Keys]\n; The key that turns flight on and off, as a Windows key code (120 = F9; 0 = none)\n"
                         "FlightKey=%u\n; Held with it: 1 Ctrl, 2 Shift, 4 Alt, added together\nFlightModifiers=%u\n"
                         "; The controller buttons, held together, as XInput bits (769 = LB+RB+d-pad up; 0 = none)\n"
-                        "FlightPad=%u\n",
-                     g_simple.load() ? 1 : 0, g_vk, g_mods, g_pad);
+                        "FlightPad=%u\n\n"
+                        "[Updates]\n; 0: don't check GitHub for a newer version when the game starts\nCheckUpdates=%d\n",
+                     g_simple.load() ? 1 : 0, g_vk, g_mods, g_pad, g_check_updates);
         std::fclose(f);
     }
 }
@@ -270,7 +272,7 @@ void on_rebind(void*, const char*, uint32_t vk, uint32_t mods, uint32_t pad) {
     save_ini();
 }
 
-// fh2-mods\FlyingCar.ini, beside this DLL.
+// fh2-mods\DoABarrelRoll.ini, beside this DLL.
 void find_ini() {
     HMODULE self = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -278,7 +280,7 @@ void find_ini() {
     DWORD n = GetModuleFileNameW(self, g_ini, MAX_PATH);
     while (n && g_ini[n - 1] != L'\\') --n;
     g_ini[n] = 0;
-    wcsncat(g_ini, L"FlyingCar.ini", MAX_PATH - n - 1);
+    wcsncat(g_ini, L"DoABarrelRoll.ini", MAX_PATH - n - 1);
 }
 
 } // namespace
@@ -286,10 +288,14 @@ void find_ini() {
 FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     if (!api) return 0;
     g_api = api;
+    find_ini();
+    g_check_updates = GetPrivateProfileIntW(L"Updates", L"CheckUpdates", 1, g_ini) != 0;
     FH2ModInfo info{};
     info.size             = sizeof info;
-    info.name             = "Flying Car";
+    info.name             = "Do A Barrel Roll";
     info.version          = MOD_VERSION_STR;
+    info.github_repo      = "Trinculo54/DoABarrelRoll";
+    info.check_updates    = g_check_updates;
     info.platform_version = FH2MOD_PLATFORM_VERSION;
     info.description      = "Your car flies like a plane. Turn flight on with F9 or LB+RB+d-pad up, get above 144 km/h "
                             "and pull back on the left stick. Back climbs, forward dives, left and right turn. RT is "
@@ -298,7 +304,7 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     g_mod = api->register_mod(&info);
     if (!g_mod) return 0;
     if (api->api_version < 9) {
-        api->log(g_mod, "Flying Car needs FH2 Mod Platform 2.8.0 or newer, so it's off.");
+        api->log(g_mod, "Do A Barrel Roll needs FH2 Mod Platform 2.8.0 or newer, so it's off.");
         return 0;
     }
 
@@ -311,7 +317,6 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     row.on_change   = &on_flight_row;
     api->add_setting(g_mod, &row);
 
-    find_ini();
     g_simple.store(GetPrivateProfileIntW(L"Flight", L"Simple", 1, g_ini) != 0);
     FH2Setting simple{};
     simple.size        = sizeof simple;
@@ -340,6 +345,6 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     if (api->api_version >= 10) api->ui_uses(g_mod, FH2_UI_USES_TOASTS);
 
     if (HANDLE t = CreateThread(nullptr, 0, &worker, nullptr, 0, nullptr)) CloseHandle(t);
-    else api->log(g_mod, "Flying Car couldn't start its thread, so it's off.");
+    else api->log(g_mod, "Do A Barrel Roll couldn't start its thread, so it's off.");
     return 0;
 }

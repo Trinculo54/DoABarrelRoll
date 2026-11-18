@@ -1,4 +1,4 @@
-// Flying Car: the flight model, kept apart from the game so tests/flight_test.cpp can check it.
+// Do A Barrel Roll: the flight model, kept apart from the game so tests/flight_test.cpp can check it.
 //
 // The game's world is left-handed with Y up; a car's orientation rows are its right, up and forward axes in the
 // world. A spin w moves a point r of the car at w x r (the algebraic cross product), so w = forward x up lifts the
