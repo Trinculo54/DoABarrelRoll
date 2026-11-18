@@ -91,10 +91,23 @@ throttle. With the throttle closed the car glides, slows and comes down.
 The flight HUD
 ~~~~~~~~~~~~~~
 
-While flight is on, the top of the screen shows the car's speed, its
-height (in the game world's own metres), the compass heading of its nose
-and how fast it's climbing or sinking. At the top right five dots show
-the throttle. The "Flight HUD" row on the mod's page turns it off.
+While flight is on, the screen has flight instruments, drawn in the
+game's own HUD:
+
+  - an artificial horizon round the middle of the screen. The long white
+    line is the horizon, the short lines are every 5 degrees of pitch,
+    and the orange marks in the middle are your car. It turns against
+    your bank and slides with your pitch, as a plane's does. The marks
+    along its top are the bank scale, with an orange pointer;
+  - a speed tape on its left, in km/h, with the throttle as a bar
+    beside it;
+  - a height tape on its right, in the game world's own metres, with
+    the climb in metres a second under it;
+  - a compass tape above it, with your heading in degrees.
+
+The "Flight HUD" row on the mod's page picks what shows: Instruments,
+Labels (the same readings as plain numbers along the top of the screen)
+or Off.
 
 
 What each button does while flying
@@ -122,8 +135,8 @@ On the mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll):
   Flight              turns flight on and off, like the hotkey
   Simple controls     On (the default): the stick turns the car and it
                       levels itself. Off: flight sim controls
-  Flight HUD          On (the default): the flight HUD shows while
-                      flight is on
+  Flight HUD          what shows while flight is on: Instruments (the
+                      default), Labels or Off
   Keys and buttons    the key and the controller buttons that turn
                       flight on and off. With other buttons than
                       LB + d-pad up the game sees them too: avoid RB
@@ -133,7 +146,7 @@ They're saved in fh2-mods\DoABarrelRoll.ini, which is written the first
 time you change one, with a comment next to each setting:
 
   Simple=1            0 = flight sim controls
-  Hud=1               0 = no flight HUD
+  Hud=2               the flight HUD: 0 none, 1 labels, 2 instruments
   FlightKey=120       the key, as a Windows key code (120 = F9)
   FlightModifiers=0   held with it: 1 Ctrl, 2 Shift, 4 Alt, added up
   FlightPad=257       the controller buttons (257 = LB+d-pad up)
@@ -185,9 +198,10 @@ fh2-mods\crashes.
   - No pop-up when flight goes on: pop-ups need platform 2.9.0, and
     follow the game's notification option and the "Pop-ups" row on the
     mod's page. Flight works without them.
-  - No flight HUD: check the "Flight HUD" row. If there's no such row,
-    the log says "This platform has no HUD layer for the mod": extract
-    this zip again for platform 2.9.0.
+  - No flight HUD: check the "Flight HUD" row. If it has no Instruments,
+    or there's no such row, another mod's zip put an older platform
+    back (the instruments need platform 2.9.1, the labels 2.9.0):
+    extract this zip again.
 
 
 Uninstall

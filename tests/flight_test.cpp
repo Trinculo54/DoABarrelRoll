@@ -3,7 +3,11 @@
 #include <cstdlib>
 #include <initializer_list>
 
+#include <cstring>
+#include <string>
+
 #include "flight.hpp"
+#include "gui.hpp"
 
 using namespace flight;
 
@@ -20,7 +24,8 @@ Body level(float speed) { return Body{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, sp
 
 } // namespace
 
-int main() {
+// flight_test [file]: with a file name, the instruments' XAML is also written there (for a look at it).
+int main(int argc, char** argv) {
     const float dt = 1.0f / 60;
 
     Body slow = level(20);
@@ -156,6 +161,71 @@ int main() {
     check(heading({0, 0, 1}) == 0 && heading({1, 0, 0}) == 90 && heading({0, 0, -1}) == 180 && heading({-1, 0, 0}) == 270 &&
               heading({-0.01f, 0.9f, 1}) == 359,
           "the heading is 0 along +z, 90 along +x, and never 360");
+
+    // ---- the instruments ----
+    Body fly = level(50);
+    gui::Reading rd = gui::reading(fly, 320, 0.5f);
+    check(std::fabs(rd.bank) < 0.01f && std::fabs(rd.pitch) < 0.01f && std::fabs(rd.kmh - 180) < 0.01f && rd.height == 320 && rd.heading == 0 &&
+              rd.throttle == 0.5f,
+          "instruments: level along +z at 50 m/s reads no bank, no pitch, 180 km/h, heading 0");
+    float n[gui::kNumbers];
+    gui::numbers(rd, n);
+    check(n[gui::kRoll] == 0 && n[gui::kPitch] == 0 && n[gui::kSpeed] == 360 && n[gui::kHeight] == 260 && n[gui::kHeading] == 0 &&
+              n[gui::kThrottle] == 0.5f,
+          "instruments: that puts 180 km/h and 320 m on the middle of their tapes");
+    Body bankr = level(50); // rolled 30 degrees to the right, nose 30 degrees up, flying east
+    bankr.forward = {0.8660254f, 0.5f, 0};
+    bankr.right   = {0, 0, -1};
+    bankr.up      = {-0.5f, 0.8660254f, 0};
+    rd            = gui::reading(bankr, 0, 0);
+    check(std::fabs(rd.pitch - 30) < 0.01f && std::fabs(rd.heading - 90) < 0.01f && std::fabs(rd.bank) < 0.01f,
+          "instruments: nose 30 degrees up, flying along +x: pitch 30, heading 90, no bank");
+    gui::numbers(rd, n);
+    check(n[gui::kPitch] == 240 && n[gui::kHeading] == -360, "instruments: the ladder slides down 240 px and the compass tape left 360");
+    Body rolled = level(50);
+    rolled.right = {0.8660254f, -0.5f, 0};
+    rolled.up    = {0.5f, 0.8660254f, 0};
+    gui::numbers(gui::reading(rolled, 0, 0), n);
+    check(std::fabs(n[gui::kRoll] + 30) < 0.05f, "instruments: banked 30 degrees right, the horizon turns 30 degrees the other way");
+    Body dive = level(50);
+    dive.forward = {0, -1.0000001f, 0};
+    gui::numbers(gui::reading(dive, 99999, 7), n);
+    check(std::isfinite(n[gui::kPitch]) && n[gui::kPitch] == -720 && n[gui::kHeight] == 1600 && n[gui::kThrottle] == 1,
+          "instruments: straight down, far too high and a throttle past full all stay on their scales");
+    gui::numbers(gui::Reading{0, 0, 180.2f, 320.4f, 0.05f, 0.501f}, n);
+    check(n[gui::kSpeed] == 360.5f && n[gui::kHeight] == 260 && n[gui::kHeading] == 0 && n[gui::kThrottle] == 0.5f,
+          "instruments: numbers are rounded to what can be seen, so small changes aren't sent");
+
+    const std::string xaml = gui::xaml();
+    const auto count = [&](const char* what) {
+        int c = 0;
+        for (std::size_t at = xaml.find(what); at != std::string::npos; at = xaml.find(what, at + 1)) ++c;
+        return c;
+    };
+    int opens = 0, closes = 0;
+    for (std::size_t i = 0; i < xaml.size(); ++i) {
+        if (xaml[i] != '<') continue;
+        const std::size_t e = xaml.find('>', i);
+        if (xaml[i + 1] == '/') ++closes;
+        else if (xaml[e - 1] != '/') ++opens;
+    }
+    check(opens == closes && opens > 100, "instruments: the XAML's tags pair up");
+    check(count("{Binding N") == gui::kNumbers + 1 && count("{Binding T") == gui::kTexts && count("{Binding ") <= 64,
+          "instruments: every number and text is bound (the roll twice: the ladder and the bank pointer), within the canvas's 64");
+    bool all = true;
+    for (int i = 0; i < gui::kNumbers; ++i) all = all && count(("{Binding N" + std::to_string(i) + "}").c_str()) >= 1;
+    for (int i = 0; i < gui::kTexts; ++i) all = all && count(("{Binding T" + std::to_string(i) + "}").c_str()) == 1;
+    check(all && !count("x:Name") && !count("x:Key") && !count("Source="), "instruments: no names, keys or pictures, which the platform's check keeps out");
+    check(count("Text=\"650\"") == 1 && count("Text=\"3000\"") == 1 && count("Text=\"-200\"") == 1 && count("Text=\"N\"") == 2 &&
+              count("Text=\"90\"") == 2,
+          "instruments: the speed tape has its 650 km/h, the height tape runs from -200 to 3000 m, the compass has north twice, the ladder 90 up and down");
+    if (argc > 1) {
+        if (FILE* f = std::fopen(argv[1], "wb")) {
+            std::fwrite(xaml.data(), 1, xaml.size(), f);
+            std::fclose(f);
+            std::printf("      the XAML (%zu bytes) is in %s\n", xaml.size(), argv[1]);
+        }
+    }
 
     std::printf(g_failed ? "FAILED\n" : "all passed\n");
     return g_failed;

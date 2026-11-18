@@ -65,9 +65,19 @@ glides, slows down and comes down.
 
 ### The flight HUD
 
-While flight is on, the top of the screen shows the car's speed, its height (in the game world's own metres),
-the compass heading of its nose and how fast it's climbing or sinking. At the top right five dots show the
-throttle. The **Flight HUD** row on the mod's page turns it off.
+While flight is on, the screen has flight instruments, drawn in the game's own HUD:
+
+- **An artificial horizon** round the middle of the screen. The long white line is the horizon, and the short
+  lines above and below it are every 5 degrees of pitch, numbered every 10. The orange marks in the middle are
+  your car. The picture turns against your bank and slides with your pitch, as a plane's does: nose up, and the
+  horizon drops below the car. The small marks along the top are the bank scale (10, 20, 30, 45 and 60 degrees
+  each way), with an orange pointer.
+- **A speed tape** on its left, in km/h, with the **throttle** as a bar beside it.
+- **A height tape** on its right, in the game world's own metres, with the climb in metres a second under it.
+- **A compass tape** above it, with your heading in degrees.
+
+The **Flight HUD** row on the mod's page picks what shows: **Instruments**, **Labels** (the same readings as
+plain numbers along the top of the screen, with the throttle as five dots) or **Off**.
 
 ### What each button does while flying
 
@@ -92,7 +102,7 @@ On the mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll):
 |---|---|
 | Flight | Turns flight on and off, like the hotkey. Starts Off each time the game starts |
 | Simple controls | On (the default): the stick turns the car and it levels itself. Off: [flight sim controls](#flight-sim-controls) |
-| Flight HUD | On (the default): [the flight HUD](#the-flight-hud) shows while flight is on |
+| Flight HUD | What shows while flight is on: Instruments (the default), Labels or Off. See [the flight HUD](#the-flight-hud) |
 | Keys and buttons | The key and the controller buttons that turn flight on and off. With other buttons than LB + d-pad up, the game sees them too: avoid RB (the camera) and Y (rewind) |
 
 They're saved in `fh2-mods\DoABarrelRoll.ini`, which is written the first time you change one. Each key has a
@@ -106,8 +116,9 @@ comment. `CheckUpdates=0` there stops the check for a newer version on GitHub wh
   the ground with flight on still works the clutch.
 - **The triggers are still the car's pedals.** In the air the wheels just spin or stop. On the ground with flight
   on, RT also drives the car and LT also brakes it, which is what you want for taking off and landing.
-- **The flight HUD and the clean LB + d-pad up need FH2 Mod Platform 2.9.0,** the one in the zip. On 2.8.0 the
-  mod flies the same without the HUD, and the game also sees the d-pad up.
+- **The flight instruments need FH2 Mod Platform 2.9.1.** On 2.9.0 the Flight HUD row offers Labels and Off, and
+  on 2.8.0 there's no flight HUD and the game also sees the d-pad up of LB + d-pad up. The mod flies the same
+  on all three.
 - **One mod's HUD at a time.** If another mod puts its own bar or labels on the screen, the flight HUD makes way
   until flight is next turned on.
 - **Rewind isn't handled.** Flight carries on through the game's rewind; turn flight off first if it gets odd.
@@ -129,9 +140,11 @@ The mod logs to `fh2-mods\platform.log`, as lines starting `[Do A Barrel Roll]`.
   or another mod changed that code first. The platform's lines just above say which.
 - **No pop-up when flight goes on:** pop-ups need platform 2.9.0, and follow the game's notification option and
   the "Pop-ups" row on the mod's page. Flight works without them.
-- **No flight HUD:** check the **Flight HUD** row. If there's no such row, the log says "This platform has no HUD
-  layer for the mod": extract this zip again for platform 2.9.0. Lines starting `[HUD layer]` in `platform.log`
-  say if the platform left its HUD layer out this session.
+- **No flight HUD:** check the **Flight HUD** row. If it has no Instruments, the log says "The flight instruments
+  need FH2 Mod Platform 2.9.1", and if there's no such row, "This platform has no HUD layer for the mod":
+  another mod's zip put an older platform back, so extract this zip again. Lines starting `[HUD layer]` in
+  `platform.log` say if the platform left its HUD layer out this session, and "HUD canvas: left out" if it
+  didn't take the instruments' drawing.
 
 If the game crashes, the platform saves a report in `fh2-mods\crashes`. Please attach it and `platform.log` to
 an [issue](https://github.com/Trinculo54/DoABarrelRoll/issues).
@@ -147,7 +160,8 @@ One hook, on the game's per-frame update of each car. After the game has updated
 car's axes, velocity and spin, works out the new velocity and spin (`src/flight.hpp`) and hands them back through
 the game's own setters, so the game's physics carries on from them. Every game address it uses is checked first.
 A fault while reading the car is caught and turns flight off for the session. The flight HUD is drawn by the
-platform's HUD layer, and a platform pad layer keeps LB + d-pad up from the game.
+platform's HUD layer: the instruments are XAML the mod gives its canvas once (`src/gui.hpp`), moved by six
+numbers. A platform pad layer keeps LB + d-pad up from the game.
 
 ## Building
 

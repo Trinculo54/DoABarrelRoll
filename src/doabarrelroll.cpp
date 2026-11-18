@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <string>
 
 #include "fh2_version.h"
 #include "fh2game.h"
@@ -27,6 +28,7 @@
 #include "fh2mod_hud.h"
 #include "fh2mod_pad.h"
 #include "flight.hpp"
+#include "gui.hpp"
 
 namespace {
 
@@ -91,7 +93,8 @@ std::atomic<float> g_speed{0}, g_height{0}, g_climb{0}, g_thrust{0};
 std::atomic<int> g_heading{0};
 const FH2HudInterface* g_hud;      // null: no HUD layer on this platform, and no flight HUD
 const FH2PadInterface* g_padlayer; // null: no pad layers, so the game sees d-pad up with LB too
-std::atomic<bool> g_hud_on{true};  // the Flight HUD row
+bool g_canvas;                     // the platform took the flight instruments' canvas (HUD layer interface 3)
+std::atomic<int> g_hud_mode{2};    // the Flight HUD row: 0 off, 1 labels, 2 instruments
 wchar_t g_ini[MAX_PATH];
 uint32_t g_vk, g_mods, g_pad; // the flight hotkey, as saved
 int g_check_updates = 1;      // CheckUpdates, as saved
@@ -159,7 +162,13 @@ __attribute__((noinline)) void fly(void* car, float dt) {
     flight::step(b, in, dt, simple);
     if (!std::isfinite(b.vel.x + b.vel.y + b.vel.z + b.spin.x + b.spin.y + b.spin.z)) return;
     g_speed.store(flight::len(b.vel), std::memory_order_relaxed);
-    g_height.store(reinterpret_cast<const float*>(dyn + DYN_POS)[1], std::memory_order_relaxed);
+    const float height = reinterpret_cast<const float*>(dyn + DYN_POS)[1];
+    g_height.store(height, std::memory_order_relaxed);
+    if (g_canvas && g_hud_mode.load(std::memory_order_relaxed) == 2) {   // the instruments' numbers, fresh every update
+        float n[gui::kNumbers];
+        gui::numbers(gui::reading(b, height, in.throttle), n);
+        g_hud->set_hud_canvas_numbers(g_mod, n, gui::kNumbers);
+    }
     g_climb.store(v[1], std::memory_order_relaxed); // the game's own, before this update: gravity is already in it
     g_heading.store(flight::heading(b.forward), std::memory_order_relaxed);
     g_thrust.store(in.throttle, std::memory_order_relaxed);
@@ -208,35 +217,47 @@ bool code_ok() {
 
 // ---- the flight HUD ----------------------------------------------------------------------------------------------------
 
-// Chips along the top of the game's HUD while flight is on: speed, height, heading and climb at the left, the
-// throttle as five dots at the right. From the worker, five times a second (which also keeps the layer's lease).
+// The flight HUD while flight is on, as the Flight HUD row says. Instruments: the canvas of src/gui.hpp, whose
+// numbers come straight from the game's thread (fly) and whose texts are set here. Labels: chips along the top of
+// the screen, speed, height, heading and climb at the left and the throttle as five dots at the right. From the
+// worker, five times a second (which also keeps the layer's lease).
 void hud_tick() {
-    static bool shown;
+    static uint32_t shown;   // the parts last asked for
     if (!g_hud) return;
-    if (!g_flying.load() || !g_hud_on.load()) {
-        if (shown) g_hud->show_hud_layer(g_mod, 0);
-        shown = false;
-        return;
-    }
-    static const char* const kPoints[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-    const int hdg = g_heading.load();
+    const int mode      = g_flying.load() ? g_hud_mode.load() : 0;
+    const uint32_t want = mode == 2 && g_canvas ? FH2_HUD_PART_CANVAS : mode ? FH2_HUD_PART_CHIPS : 0;
+    const int hdg = g_heading.load(), kmh = static_cast<int>(std::lround(g_speed.load() * 3.6f));
+    const int metres = static_cast<int>(std::lround(g_height.load())), climbing = static_cast<int>(std::lround(g_climb.load()));
     char spd[24], alt[24], dir[24], climb[24];
-    std::snprintf(spd, sizeof spd, "Spd %d km/h", static_cast<int>(std::lround(g_speed.load() * 3.6f)));
-    std::snprintf(alt, sizeof alt, "Alt %d m", static_cast<int>(std::lround(g_height.load())));
-    std::snprintf(dir, sizeof dir, "Hdg %03d %s", hdg, kPoints[(hdg + 22) % 360 / 45]);
-    std::snprintf(climb, sizeof climb, "Climb %+d m/s", static_cast<int>(std::lround(g_climb.load())));
-    FH2HudState s{};
-    s.size               = sizeof s;
-    s.chips[0].text      = spd;
-    s.chips[1].text      = alt;
-    s.chips[2].text      = dir;
-    s.chips[3].text      = climb;
-    s.corner.text        = "Throttle";
-    s.corner.dots        = FH2_HUD_MAX_CHIP_DOTS;
-    s.corner.dots_filled = static_cast<uint8_t>(std::lround(flight::clamp01(g_thrust.load()) * FH2_HUD_MAX_CHIP_DOTS));
-    g_hud->set_hud_state(g_mod, &s);
-    // Shown once each time flight goes on: if another mod's layer takes the screen after that, it keeps it.
-    if (!shown) shown = g_hud->show_hud_layer(g_mod, FH2_HUD_PART_CHIPS) != 0;
+    if (want == FH2_HUD_PART_CANVAS) {
+        std::snprintf(spd, sizeof spd, "%d", kmh);
+        std::snprintf(alt, sizeof alt, "%d", metres);
+        std::snprintf(climb, sizeof climb, "%+d M/S", climbing);
+        std::snprintf(dir, sizeof dir, "%03d", hdg);
+        g_hud->set_hud_canvas_text(g_mod, gui::kSpeedText, spd);
+        g_hud->set_hud_canvas_text(g_mod, gui::kHeightText, alt);
+        g_hud->set_hud_canvas_text(g_mod, gui::kClimbText, climb);
+        g_hud->set_hud_canvas_text(g_mod, gui::kHeadingText, dir);
+    } else if (want) {
+        static const char* const kPoints[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+        std::snprintf(spd, sizeof spd, "Spd %d km/h", kmh);
+        std::snprintf(alt, sizeof alt, "Alt %d m", metres);
+        std::snprintf(dir, sizeof dir, "Hdg %03d %s", hdg, kPoints[(hdg + 22) % 360 / 45]);
+        std::snprintf(climb, sizeof climb, "Climb %+d m/s", climbing);
+        FH2HudState s{};
+        s.size               = sizeof s;
+        s.chips[0].text      = spd;
+        s.chips[1].text      = alt;
+        s.chips[2].text      = dir;
+        s.chips[3].text      = climb;
+        s.corner.text        = "Throttle";
+        s.corner.dots        = FH2_HUD_MAX_CHIP_DOTS;
+        s.corner.dots_filled = static_cast<uint8_t>(std::lround(flight::clamp01(g_thrust.load()) * FH2_HUD_MAX_CHIP_DOTS));
+        g_hud->set_hud_state(g_mod, &s);
+    }
+    // Asked for once each time it changes (flight on or off, or the row): if another mod's layer takes the screen
+    // after that, it keeps it.
+    if (want != shown && (g_hud->show_hud_layer(g_mod, want) || !want)) shown = want;
 }
 
 // ---- the controller ---------------------------------------------------------------------------------------------------
@@ -310,14 +331,15 @@ void save_ini() {
     if (FILE* f = _wfopen(g_ini, L"w")) {
         std::fprintf(f, "[Flight]\n; 1: simple controls (the stick turns the car; with LB held it rolls). 0: flight sim controls\n"
                         "; (the stick rolls, the triggers move the throttle lever, and with LB held they're the rudder)\n"
-                        "Simple=%d\n; 1: speed, height, heading, climb and throttle along the top of the screen while flying\n"
+                        "Simple=%d\n; The flight HUD while flying. 0: none. 1: labels along the top of the screen. 2: flight instruments\n"
+                        "; (an artificial horizon, speed and height tapes, a compass; they need FH2 Mod Platform 2.9.1)\n"
                         "Hud=%d\n\n"
                         "[Keys]\n; The key that turns flight on and off, as a Windows key code (120 = F9; 0 = none)\n"
                         "FlightKey=%u\n; Held with it: 1 Ctrl, 2 Shift, 4 Alt, added together\nFlightModifiers=%u\n"
                         "; The controller buttons, held together, as XInput bits (257 = LB+d-pad up; 0 = none)\n"
                         "FlightPad=%u\n\n"
                         "[Updates]\n; 0: don't check GitHub for a newer version when the game starts\nCheckUpdates=%d\n",
-                     g_simple.load() ? 1 : 0, g_hud_on.load() ? 1 : 0, g_vk, g_mods, g_pad, g_check_updates);
+                     g_simple.load() ? 1 : 0, g_hud_mode.load(), g_vk, g_mods, g_pad, g_check_updates);
         std::fclose(f);
     }
 }
@@ -329,9 +351,12 @@ void on_simple_row(void*, const char*, int value) {
     save_ini();
 }
 
+const char* const kHudChoices[] = {"Off", "Labels", "Instruments"};
+
 void on_hud_row(void*, const char*, int value) {
-    g_hud_on.store(value != 0);
-    logf("The flight HUD is %s.", value ? "on" : "off");
+    if (value < 0 || value > (g_canvas ? 2 : 1)) return;
+    g_hud_mode.store(value);
+    logf("The flight HUD is %s.", value == 2 ? "the instruments" : value ? "the labels" : "off");
     save_ini();
 }
 
@@ -431,27 +456,48 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
         layer.on_press = &on_layer_press;
         if (!g_padlayer->add_layer(g_mod, &layer)) g_padlayer = nullptr;
     }
-    g_hud = static_cast<const FH2HudInterface*>(api->get_interface(FH2_HUD_INTERFACE, FH2_HUD_INTERFACE_VERSION));
-    if (g_hud && g_hud->size >= sizeof(FH2HudInterface)) {
+    // The labels need the layer of platform 2.9.0 (interface 2); the instruments its canvas, from 2.9.1 (interface 3).
+    g_hud = static_cast<const FH2HudInterface*>(api->get_interface(FH2_HUD_INTERFACE, 2));
+    if (g_hud && g_hud->size >= offsetof(FH2HudInterface, add_hud_canvas)) {
+        const bool canvas = g_hud->version >= 3 && g_hud->size >= sizeof(FH2HudInterface);
         FH2HudLayer layer{};
         layer.size     = sizeof layer;
-        layer.parts    = FH2_HUD_PART_CHIPS;
+        layer.parts    = FH2_HUD_PART_CHIPS | (canvas ? FH2_HUD_PART_CANVAS : 0);
         layer.lease_ms = 2000;
-        if (!g_hud->add_hud_layer(g_mod, &layer)) g_hud = nullptr;
+        if (!g_hud->add_hud_layer(g_mod, &layer)) {
+            g_hud = nullptr;
+        } else if (canvas) {
+            const std::string xaml = gui::xaml();
+            FH2HudCanvas c{};
+            c.size    = sizeof c;
+            c.xaml    = xaml.c_str();
+            c.numbers = gui::kNumbers;
+            c.texts   = gui::kTexts;
+            g_canvas  = g_hud->add_hud_canvas(g_mod, &c) != 0;
+        } else {
+            api->log(g_mod, "The flight instruments need FH2 Mod Platform 2.9.1; on this one the flight HUD is its labels.");
+        }
     } else {
         g_hud = nullptr;
     }
     if (!g_hud) api->log(g_mod, "This platform has no HUD layer for the mod, so there's no flight HUD; flying is the same.");
-    g_hud_on.store(GetPrivateProfileIntW(L"Flight", L"Hud", 1, g_ini) != 0);
+    const int hud_saved = GetPrivateProfileIntW(L"Flight", L"Hud", 2, g_ini);
+    g_hud_mode.store(hud_saved <= 0 ? 0 : hud_saved == 1 || !g_canvas ? 1 : 2);
     if (g_hud) {
         FH2Setting hud{};
-        hud.size        = sizeof hud;
-        hud.key         = "Hud";
-        hud.label       = "Flight HUD";
-        hud.description = "On: while flight is on, the top of the screen shows your speed, height, compass heading and "
-                          "climb, and the throttle as five dots.";
-        hud.value       = g_hud_on.load() ? 1 : 0;
-        hud.on_change   = &on_hud_row;
+        hud.size         = sizeof hud;
+        hud.key          = "Hud";
+        hud.label        = "Flight HUD";
+        hud.description  = g_canvas ? "What shows while flight is on. Instruments: an artificial horizon, speed and height tapes, "
+                                      "a compass, the climb and the throttle. Labels: the same readings as plain numbers along "
+                                      "the top of the screen."
+                                    : "Labels: while flight is on, the top of the screen shows your speed, height, compass heading "
+                                      "and climb, and the throttle as five dots.";
+        hud.kind         = FH2_SETTING_CHOICE;
+        hud.choices      = kHudChoices;
+        hud.choice_count = g_canvas ? 3 : 2;
+        hud.value        = g_hud_mode.load();
+        hud.on_change    = &on_hud_row;
         api->add_setting(g_mod, &hud);
     }
 
