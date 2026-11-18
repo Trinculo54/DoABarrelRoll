@@ -324,7 +324,16 @@ DWORD WINAPI worker(void*) {
 // ---- settings ---------------------------------------------------------------------------------------------------------
 
 void on_flight_row(void*, const char*, int value) { set_flying(value != 0, "the Flight row"); }
-void on_hotkey(void*, const char*) { set_flying(!g_flying.load(), "the hotkey"); }
+// The hotkey only counts in the driving view: in a menu LB and d-pad up are the menu's own (tab left, move up), and
+// held together there they would turn flight on and off behind it. Where the platform can't tell (no pop-ups this
+// session, or before 2.9.0) every press counts, as its pad layer docs advise.
+void on_hotkey(void*, const char*) {
+    if (g_api->api_version >= 10) {
+        const uint32_t ui = g_api->ui_status(g_mod);
+        if ((ui & FH2_UI_TOASTS) && !(ui & FH2_UI_ON_SCREEN)) return;
+    }
+    set_flying(!g_flying.load(), "the hotkey");
+}
 
 // Writes fh2-mods\DoABarrelRoll.ini whole, from what the rows say now. On the UI thread (a row or a binding changed).
 void save_ini() {

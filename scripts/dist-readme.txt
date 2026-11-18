@@ -163,6 +163,8 @@ Good to know
     platform doesn't load the mod.
   - The keyboard can turn flight on and off, but flying needs a
     controller.
+  - The key and the buttons for flight only work while you're driving,
+    not in a menu, the map or photo mode. The Flight row works anywhere.
   - LB is the game's clutch. That does nothing in the air, but if you
     drive manual with clutch, holding LB on the ground with flight on
     still works the clutch.

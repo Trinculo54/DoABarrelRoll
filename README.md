@@ -112,6 +112,8 @@ comment. `CheckUpdates=0` there stops the check for a newer version on GitHub wh
 
 - **Offline only.** When the game is started from FH2MP's launcher, the platform doesn't load the mod.
 - **Controller only in the air.** The keyboard can turn flight on and off, but flying needs a controller.
+- **The key and the buttons for flight only work while you're driving,** not in a menu, the map or photo mode,
+  where LB and the d-pad are the menu's own. The Flight row works anywhere.
 - **LB is the game's clutch.** That does nothing in the air, but if you drive manual with clutch, holding LB on
   the ground with flight on still works the clutch.
 - **The triggers are still the car's pedals.** In the air the wheels just spin or stop. On the ground with flight
