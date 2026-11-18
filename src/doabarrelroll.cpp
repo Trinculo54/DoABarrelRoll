@@ -729,12 +729,15 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
 
     // Both are preview interfaces of platform 2.9.0; without them the mod flies the same, with no HUD of its own
     // and with d-pad up reaching the game.
-    g_padlayer = static_cast<const FH2PadInterface*>(api->get_interface(FH2_PAD_INTERFACE, FH2_PAD_INTERFACE_VERSION));
+    // Pad layers are in platform 2.9.0 (interface 1). From 2.9.1 (interface 2) the layer is for the driving view
+    // only, so in a menu LB with d-pad up is the menu's again.
+    g_padlayer = static_cast<const FH2PadInterface*>(api->get_interface(FH2_PAD_INTERFACE, 1));
     if (g_padlayer) {
         FH2PadLayer layer{sizeof layer};
         layer.key      = "Flight";
         layer.modifier = g_pad == kDefaultPad ? FH2_PAD_LB : 0;
         layer.buttons  = FH2_PAD_DPAD_UP;
+        layer.flags    = g_padlayer->version >= 2 ? FH2_PAD_LAYER_WORLD : 0;
         layer.on_press = &on_layer_press;
         if (!g_padlayer->add_layer(g_mod, &layer)) g_padlayer = nullptr;
     }
