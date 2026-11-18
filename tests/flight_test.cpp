@@ -1,6 +1,7 @@
 // The flight model's self-check: each case prints its name, and the run fails on the first one that doesn't hold.
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 
 #include "flight.hpp"
 
@@ -45,7 +46,7 @@ int main() {
 
     Body lift = level(50);
     step(lift, Controls{0, 0, 0, 0, false}, dt, false);
-    check(std::fabs(lift.vel.y - kGravity * dt) < 1e-4f, "from 144 km/h lift balances gravity in level flight");
+    check(std::fabs(lift.vel.y - kGravity * dt) < 1e-3f, "from 144 km/h lift balances gravity in level flight");
 
     Body upside = level(50);
     upside.right = {-1, 0, 0};
@@ -62,7 +63,7 @@ int main() {
 
     Body thrust = level(50);
     step(thrust, Controls{0, 0, 1, 0, false}, dt, false);
-    check(thrust.vel.z > 50.2f, "RT pushes the car forward");
+    check(thrust.vel.z > 50.15f, "full throttle pushes the car forward");
 
     Body brake = level(50);
     step(brake, Controls{0, 0, 0, 1, false}, dt, false);
@@ -112,6 +113,49 @@ int main() {
     step(up, Controls{0, 0, 0, 0, false}, dt, true);
     check(std::isfinite(up.spin.x + up.spin.y + up.spin.z) && len(up.spin) < 0.01f,
           "simple: nose straight up, no levelling twitch");
+
+    // ---- flight sim controls ----
+    float lever  = 0;
+    Controls up1 = controls(Pad{0, 0, 1, 0, false}, false, lever, 0.5f);
+    check(std::fabs(lever - 0.5f) < 1e-4f && up1.throttle == lever && up1.rudder == 0, "sim: RT pushes the throttle lever up");
+    Controls stay = controls(Pad{0, 0, 0, 0, false}, false, lever, 5.0f);
+    check(std::fabs(stay.throttle - 0.5f) < 1e-4f && stay.brake == 0, "sim: with the triggers let go, the lever stays where it was");
+    Controls down = controls(Pad{0, 0, 0, 1, false}, false, lever, 0.25f);
+    check(std::fabs(lever - 0.25f) < 1e-4f && down.brake == 1, "sim: LT pulls the lever down and opens the air brake");
+    Controls ped = controls(Pad{0.3f, 0, 1, 0, true}, false, lever, 1.0f);
+    check(ped.rudder == 1 && std::fabs(lever - 0.25f) < 1e-4f && ped.brake == 0 && !ped.roll && ped.stick_x == 0.3f,
+          "sim: with LB held the triggers are the rudder, and the lever and the stick's roll are as they were");
+    check(controls(Pad{0, 0, 0, 1, true}, false, lever, 1.0f).rudder == -1, "sim: LB with LT is left rudder");
+    float unused  = 0.7f;
+    Controls easy = controls(Pad{0, 0, 0.4f, 0.2f, true}, true, unused, 1.0f);
+    check(easy.throttle == 0.4f && easy.brake == 0.2f && easy.roll && easy.rudder == 0 && unused == 0.7f,
+          "simple: the triggers are thrust and air brake, LB is the roll button, and there's no lever");
+
+    Body yaw = level(50);
+    for (int i = 0; i < 30; ++i) step(yaw, Controls{0, 0, 0, 0, false, 1}, dt, false);
+    check(dot(cross(yaw.spin, yaw.forward), yaw.right) > 0.6f && std::fabs(dot(cross(yaw.spin, yaw.up), yaw.right)) < 0.01f,
+          "sim: right rudder swings the nose right and doesn't roll");
+    Body noyaw = level(50);
+    for (int i = 0; i < 30; ++i) step(noyaw, Controls{0, 0, 0, 0, false, 1}, dt, true);
+    check(len(noyaw.spin) < 0.01f, "simple: there's no rudder");
+
+    // Two minutes at one throttle setting, with the game's gravity taken off each step, as the game does.
+    for (float throttle : {1.0f, 0.5f}) {
+        Body cruise = level(50);
+        for (int i = 0; i < 120 * 60; ++i) {
+            step(cruise, Controls{0, 0, throttle, 0, false, 0}, dt, false);
+            cruise.vel.y -= kGravity * dt;
+        }
+        check(std::fabs(len(cruise.vel) - kTopSpeed * std::sqrt(throttle)) < 1.0f && std::fabs(cruise.vel.y) < 0.01f,
+              throttle == 1 ? "sim: full throttle settles at 450 km/h in level flight" : "sim: half throttle settles at about 318 km/h");
+    }
+    Body coast = level(20);
+    step(coast, Controls{0, 0, 0, 0, false, 0}, dt, false);
+    check(coast.vel.z == 20, "sim: below 90 km/h there's no drag, so the car drives as without the mod");
+
+    check(heading({0, 0, 1}) == 0 && heading({1, 0, 0}) == 90 && heading({0, 0, -1}) == 180 && heading({-1, 0, 0}) == 270 &&
+              heading({-0.01f, 0.9f, 1}) == 359,
+          "the heading is 0 along +z, 90 along +x, and never 360");
 
     std::printf(g_failed ? "FAILED\n" : "all passed\n");
     return g_failed;

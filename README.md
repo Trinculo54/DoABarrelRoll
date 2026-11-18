@@ -24,7 +24,7 @@ you use other FH2 mods, extract the zip with the newest platform last.
 
 ## Flying
 
-1. Turn flight on: **F9** on the keyboard, or **LB + RB + d-pad up** on the controller. The **Flight** row on the
+1. Turn flight on: **F9** on the keyboard, or **LB + d-pad up** on the controller. The **Flight** row on the
    mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll) does the same. A pop-up says when it's on or off.
 2. Get going. Below 90 km/h the car drives as usual. From there it starts to get light, and from 144 km/h its
    "wings" hold it up.
@@ -45,6 +45,45 @@ drops like a car again.
 
 Flight starts Off each time the game starts. It only ever moves your own car, never traffic or Drivatars.
 
+### Flight sim controls
+
+Turn **Simple controls** off on the mod's page and the car flies with a plane's full set of controls: the stick
+for pitch and roll, a rudder, and a throttle that stays where you leave it. Nothing levels the car for you, and
+its lift points out of its roof, so you turn by rolling and pulling back.
+
+| Control | In the air |
+|---|---|
+| Left stick back (down) / forward (up) | Elevator: nose up / nose down |
+| Left stick left or right | Ailerons: roll |
+| RT | Throttle up. Let go and it stays where it is |
+| LT | Throttle down, and the air brake while it's held |
+| LB held, RT / LT | Rudder: nose right / nose left. The throttle stays as it was |
+
+The throttle starts closed each time flight goes on. Each setting has a speed the car settles at: about
+450 km/h in level flight at full throttle, less in a climb, more in a dive. With the throttle closed the car
+glides, slows down and comes down.
+
+### The flight HUD
+
+While flight is on, the top of the screen shows the car's speed, its height (in the game world's own metres),
+the compass heading of its nose and how fast it's climbing or sinking. At the top right five dots show the
+throttle. The **Flight HUD** row on the mod's page turns it off.
+
+### What each button does while flying
+
+The mod only reads the controls the game doesn't need in the air, so nothing does two things at once:
+
+| Button | In the game | With flight on |
+|---|---|---|
+| Left stick | Steers | Flies the car |
+| RT / LT | Accelerator / brake | Thrust or throttle / air brake |
+| LB | Clutch (only with manual with clutch) | Held: the stick rolls (simple controls), or RT and LT are the rudder (flight sim controls) |
+| LB + d-pad up | | Flight on or off. The game doesn't see this d-pad up |
+| RB | Changes the camera | Left to the game |
+| Right stick | Looks around | Left to the game |
+| Y | Rewind | Left to the game |
+| A, B, X, the d-pad, the stick clicks, View and Menu | As always | Left to the game |
+
 ## Settings
 
 On the mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll):
@@ -52,8 +91,9 @@ On the mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll):
 | Row | What it does |
 |---|---|
 | Flight | Turns flight on and off, like the hotkey. Starts Off each time the game starts |
-| Simple controls | On (the default): the controls in the table above. Off: a plane's controls. Left and right on the stick roll the car, nothing levels it for you, and you turn by rolling and pulling back |
-| Keys and buttons | The key and the controller buttons that turn flight on and off |
+| Simple controls | On (the default): the stick turns the car and it levels itself. Off: [flight sim controls](#flight-sim-controls) |
+| Flight HUD | On (the default): [the flight HUD](#the-flight-hud) shows while flight is on |
+| Keys and buttons | The key and the controller buttons that turn flight on and off. With other buttons than LB + d-pad up, the game sees them too: avoid RB (the camera) and Y (rewind) |
 
 They're saved in `fh2-mods\DoABarrelRoll.ini`, which is written the first time you change one. Each key has a
 comment. `CheckUpdates=0` there stops the check for a newer version on GitHub when the game starts.
@@ -64,6 +104,12 @@ comment. `CheckUpdates=0` there stops the check for a newer version on GitHub wh
 - **Controller only in the air.** The keyboard can turn flight on and off, but flying needs a controller.
 - **LB is the game's clutch.** That does nothing in the air, but if you drive manual with clutch, holding LB on
   the ground with flight on still works the clutch.
+- **The triggers are still the car's pedals.** In the air the wheels just spin or stop. On the ground with flight
+  on, RT also drives the car and LT also brakes it, which is what you want for taking off and landing.
+- **The flight HUD and the clean LB + d-pad up need FH2 Mod Platform 2.9.0,** the one in the zip. On 2.8.0 the
+  mod flies the same without the HUD, and the game also sees the d-pad up.
+- **One mod's HUD at a time.** If another mod puts its own bar or labels on the screen, the flight HUD makes way
+  until flight is next turned on.
 - **Rewind isn't handled.** Flight carries on through the game's rewind; turn flight off first if it gets odd.
 - Pulling back hard near the ground at speed can tip the car over before it leaves the ground: lift off with a
   gentle pull.
@@ -83,6 +129,9 @@ The mod logs to `fh2-mods\platform.log`, as lines starting `[Do A Barrel Roll]`.
   or another mod changed that code first. The platform's lines just above say which.
 - **No pop-up when flight goes on:** pop-ups need platform 2.9.0, and follow the game's notification option and
   the "Pop-ups" row on the mod's page. Flight works without them.
+- **No flight HUD:** check the **Flight HUD** row. If there's no such row, the log says "This platform has no HUD
+  layer for the mod": extract this zip again for platform 2.9.0. Lines starting `[HUD layer]` in `platform.log`
+  say if the platform left its HUD layer out this session.
 
 If the game crashes, the platform saves a report in `fh2-mods\crashes`. Please attach it and `platform.log` to
 an [issue](https://github.com/Trinculo54/DoABarrelRoll/issues).
@@ -97,7 +146,8 @@ Delete `fh2-mods\DoABarrelRoll.dll` and `fh2-mods\DoABarrelRoll.ini`. If you don
 One hook, on the game's per-frame update of each car. After the game has updated your car, the mod reads the
 car's axes, velocity and spin, works out the new velocity and spin (`src/flight.hpp`) and hands them back through
 the game's own setters, so the game's physics carries on from them. Every game address it uses is checked first.
-A fault while reading the car is caught and turns flight off for the session.
+A fault while reading the car is caught and turns flight off for the session. The flight HUD is drawn by the
+platform's HUD layer, and a platform pad layer keeps LB + d-pad up from the game.
 
 ## Building
 

@@ -20,11 +20,19 @@ inline V3 cross(V3 a, V3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b
 inline float len(V3 a) { return std::sqrt(dot(a, a)); }
 inline float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
-// What the player is doing: the left stick (-1..1, up and right positive), the triggers (0..1) and, for simple
-// controls, whether the roll button (LB: the clutch, which does nothing in the air) is held.
+// The controller as it's read: the left stick (-1..1, up and right positive), the triggers (0..1) and LB (the
+// clutch, which does nothing in the air). Every other button is left to the game: RB changes its camera, Y rewinds.
+struct Pad {
+    float stick_x, stick_y, rt, lt;
+    bool lb;
+};
+
+// What that asks of the car: the stick, thrust and air brake (0..1), whether the stick rolls (simple controls with
+// LB held) and the rudder (-1..1, right positive; flight sim controls only).
 struct Controls {
     float stick_x, stick_y, throttle, brake;
     bool roll;
+    float rudder;
 };
 
 // The car's state, as the game keeps it: its axes, velocity (m/s) and spin (rad/s), all in the world.
@@ -45,9 +53,31 @@ constexpr float kResponse    = 6.0f;   // how quickly the spin reaches what the 
 constexpr float kFollowNose  = 2.5f;   // how quickly the velocity turns to where the nose points (1/s)
 constexpr float kThrust      = 14.0f;  // m/s^2 at full right trigger
 constexpr float kAirBrake    = 0.6f;   // fraction of speed lost per second at full left trigger
+constexpr float kYawRate     = 0.8f;   // flight sim controls: rad/s of yaw at full rudder
+constexpr float kLeverRate   = 1.0f;   // flight sim controls: the throttle lever's travel per second at a full trigger
+constexpr float kTopSpeed    = 125.0f; // flight sim controls: m/s (450 km/h), where drag matches full throttle
+
+// The controller turned into what it asks of the car.
+// Simple controls: RT is thrust and LT the air brake while they're held, and LB makes the stick roll.
+// Flight sim controls: RT and LT move the throttle `lever` up and down, and it stays where it's left (LT is the
+// air brake too). With LB held the triggers are the rudder pedals instead, and the lever stays put.
+inline Controls controls(const Pad& p, bool simple, float& lever, float dt) {
+    if (simple) return {p.stick_x, p.stick_y, p.rt, p.lt, p.lb, 0};
+    if (p.lb) return {p.stick_x, p.stick_y, lever, 0, false, p.rt - p.lt};
+    lever = clamp01(lever + (p.rt - p.lt) * kLeverRate * dt);
+    return {p.stick_x, p.stick_y, lever, p.lt, false, 0};
+}
+
+// The compass heading of the nose, 0 to 359 degrees.
+// shortcut: takes the world's +z as north and +x as east, which hasn't been checked in game; swap here if it's off.
+inline int heading(V3 forward) {
+    const int deg = static_cast<int>(std::lround(std::atan2(forward.x, forward.z) * 57.29578f));
+    return (deg % 360 + 360) % 360;
+}
 
 // One update of `dt` seconds: the new velocity and spin (the game moves the car with them).
-// Plane controls: the stick pitches and rolls, and lift is along the car's roof, so a turn is a roll and a pull.
+// Flight sim controls: the stick pitches and rolls, the rudder yaws, and lift is along the car's roof, so a turn is
+// a roll and a pull. Drag grows with speed, so each throttle setting has a speed it settles at.
 // Simple controls: the stick pitches and turns; the car banks into the turn and levels out by itself, lift always
 // points at the sky (a banked or upside-down car doesn't sink). With LB held the stick rolls it instead, for a
 // barrel roll, and nothing levels it.
@@ -74,6 +104,7 @@ inline void step(Body& b, const Controls& c, float dt, bool simple) {
         want = want + sky * (c.stick_x * kTurnRate);
     }
     want   = want + cross(b.up, b.right) * roll;
+    if (!simple) want = want + b.up * (c.rudder * kYawRate); // a spin about the roof swings the nose to the right
     b.spin = b.spin + (want - b.spin) * (clamp01(kResponse * dt) * air);
 
     // The velocity swings round to the nose, keeping its speed, so the car goes where it points.
@@ -88,6 +119,7 @@ inline void step(Body& b, const Controls& c, float dt, bool simple) {
     b.vel = b.vel + (simple ? sky : b.up) * (kGravity * air * dt);
 
     b.vel = b.vel + b.forward * (kThrust * c.throttle * dt);
+    if (!simple) b.vel = b.vel * (1.0f - clamp01(kThrust * len(b.vel) / (kTopSpeed * kTopSpeed) * air * dt));
     b.vel = b.vel * (1.0f - clamp01(kAirBrake * c.brake * air * dt)); // scaled by air: LT still reverses when slow
 }
 

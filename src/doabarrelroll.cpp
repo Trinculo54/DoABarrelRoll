@@ -1,5 +1,9 @@
-// Do A Barrel Roll: the player's car flies like a plane while flight is on (F9, or LB+RB with d-pad up; both can be
+// Do A Barrel Roll: the player's car flies like a plane while flight is on (F9, or LB with d-pad up; both can be
 // changed on the mod's page). src/flight.hpp has the flight model, README.md the controls.
+//
+// The controller while flying. The mod reads the left stick, the triggers and LB (the game's steering, pedals and
+// clutch, none of which matter in the air), and nothing else: RB stays the game's camera button, Y its rewind, the
+// right stick its look-around and the d-pad its radio. D-pad up with LB held is kept from the game by a pad layer.
 //
 // One hook, on ForzaCar's per-frame update (fh2game.h). After the game's own update of the player's car, the flight
 // model reads the car's axes, velocity and spin from its CCarDynamics and hands the new velocity and spin back
@@ -20,6 +24,8 @@
 #include "fh2_version.h"
 #include "fh2game.h"
 #include "fh2mod.h"
+#include "fh2mod_hud.h"
+#include "fh2mod_pad.h"
 #include "flight.hpp"
 
 namespace {
@@ -29,13 +35,14 @@ namespace {
 constexpr uintptr_t RVA_CAR_GET_DYN  = 0xF605D0;  // game+0x140F605D0: the car's CCarDynamics, car+0x4C08
 constexpr uintptr_t RVA_DYN_VT_A     = 0x2EB4BB8; // game+0x142EB4BB8: CCarDynamics' vtable
 constexpr uintptr_t RVA_DYN_VT_B     = 0x2EB5E18; // game+0x142EB5E18: its reference-counted form, same slots below
+constexpr uintptr_t RVA_DYN_GET_POS  = 0x12CD150; // game+0x1412CD150, slot 0x270: position at dyn-0x390
 constexpr uintptr_t RVA_DYN_GET_VEL  = 0x12CDCF0; // game+0x1412CDCF0, slot 0x288: velocity at dyn-0x350
 constexpr uintptr_t RVA_DYN_GET_SPIN = 0x12C5C90; // game+0x1412C5C90, slot 0x2B8: spin (world) at dyn-0x340
 constexpr uintptr_t RVA_DYN_GET_ROWS = 0x12CBEB0; // game+0x1412CBEB0, slot 0x2E0: right, up, forward rows at dyn-0x380
 constexpr uintptr_t RVA_DYN_SET_VEL  = 0x12E3CF0; // game+0x1412E3CF0, slot 0x290: SetVelocity(dyn, const float4*)
 constexpr uintptr_t RVA_DYN_SET_SPIN = 0x12DD910; // game+0x1412DD910, slot 0x2C0: SetAngularVelocity(dyn, const float4*)
 constexpr ptrdiff_t CAR_DYN = 0x4C08, CAR_KIND = 0x4D08;
-constexpr ptrdiff_t DYN_ROWS = -0x380, DYN_VEL = -0x350, DYN_SPIN = -0x340;
+constexpr ptrdiff_t DYN_POS = -0x390, DYN_ROWS = -0x380, DYN_VEL = -0x350, DYN_SPIN = -0x340;
 
 #define CODE(rva, bytes, what) {rva, bytes, sizeof(bytes) - 1, what}
 struct Code {
@@ -47,6 +54,7 @@ struct Code {
 const Code kCode[] = {
     CODE(FH2_GAME_FORZACAR_KIND, FH2_GAME_FORZACAR_KIND_BYTES, "the car's kind"),
     CODE(RVA_CAR_GET_DYN, "\x48\x8B\x81\x08\x4C\x00\x00\xC3", "the car's dynamics"),
+    CODE(RVA_DYN_GET_POS, "\xC5\xF8\x28\x81\x70\xFC\xFF\xFF", "the car's position"),
     CODE(RVA_DYN_GET_VEL, "\xC5\xF8\x28\x81\xB0\xFC\xFF\xFF", "the car's velocity"),
     CODE(RVA_DYN_GET_SPIN, "\xC5\xF8\x28\x81\xC0\xFC\xFF\xFF", "the car's spin"),
     CODE(RVA_DYN_GET_ROWS, "\x48\x8B\xC2\x48\x8D\x91\x80\xFC\xFF\xFF", "the car's orientation"),
@@ -57,8 +65,8 @@ struct Slot {
     size_t offset;
     uintptr_t rva;
 };
-const Slot kSlots[] = {{0x288, RVA_DYN_GET_VEL}, {0x290, RVA_DYN_SET_VEL},   {0x2B8, RVA_DYN_GET_SPIN},
-                       {0x2C0, RVA_DYN_SET_SPIN}, {0x2E0, RVA_DYN_GET_ROWS}};
+const Slot kSlots[] = {{0x270, RVA_DYN_GET_POS},  {0x288, RVA_DYN_GET_VEL},  {0x290, RVA_DYN_SET_VEL},
+                       {0x2B8, RVA_DYN_GET_SPIN}, {0x2C0, RVA_DYN_SET_SPIN}, {0x2E0, RVA_DYN_GET_ROWS}};
 
 using UpdateFn = uint64_t (*)(void* car, float dt, float b, uint64_t d); // rcx, xmm1, xmm2, r9
 using SetFn    = void (*)(void* dyn, const float* v4);                    // reads 16 aligned bytes
@@ -74,9 +82,16 @@ UpdateFn o_update;
 std::atomic<bool> g_ready{false};  // the hook is in
 std::atomic<bool> g_flying{false}; // flight is on
 std::atomic<bool> g_fault{false};  // the flight model faulted once (caught): off for the session
-std::atomic<bool> g_simple{true};  // simple controls (the stick turns) rather than a plane's (the stick rolls)
-std::atomic<float> g_stick_x{0}, g_stick_y{0}, g_throttle{0}, g_brake{0};
-std::atomic<bool> g_roll{false};   // LB is held: the stick rolls
+std::atomic<bool> g_simple{true};  // simple controls (the stick turns) rather than flight sim controls
+std::atomic<float> g_stick_x{0}, g_stick_y{0}, g_rt{0}, g_lt{0}; // the controller, from the worker
+std::atomic<bool> g_lb{false};
+std::atomic<float> g_lever{0};     // flight sim controls: the throttle lever, 0 to 1
+// For the flight HUD, from the game's thread: speed (m/s), height (m), heading (degrees), climb (m/s), thrust (0..1).
+std::atomic<float> g_speed{0}, g_height{0}, g_climb{0}, g_thrust{0};
+std::atomic<int> g_heading{0};
+const FH2HudInterface* g_hud;      // null: no HUD layer on this platform, and no flight HUD
+const FH2PadInterface* g_padlayer; // null: no pad layers, so the game sees d-pad up with LB too
+std::atomic<bool> g_hud_on{true};  // the Flight HUD row
 wchar_t g_ini[MAX_PATH];
 uint32_t g_vk, g_mods, g_pad; // the flight hotkey, as saved
 int g_check_updates = 1;      // CheckUpdates, as saved
@@ -111,6 +126,7 @@ void set_flying(bool on, const char* by) {
     if (g_flying.exchange(on) == on) return;
     g_api->set_setting(g_mod, "Flight", on ? 1 : 0);
     logf("Flight is %s (%s).", on ? "on" : "off", by);
+    if (on) g_lever.store(0); // the throttle lever starts closed
     if (on) toast("Flight on", "Over 144 km/h, pull back on the left stick");
     else toast("Flight off", "Back to driving");
 }
@@ -133,11 +149,20 @@ __attribute__((noinline)) void fly(void* car, float dt) {
     const float* v = reinterpret_cast<const float*>(dyn + DYN_VEL);
     const float* w = reinterpret_cast<const float*>(dyn + DYN_SPIN);
     flight::Body b{{r[0], r[1], r[2]}, {r[4], r[5], r[6]}, {r[8], r[9], r[10]}, {v[0], v[1], v[2]}, {w[0], w[1], w[2]}};
-    const flight::Controls in{g_stick_x.load(std::memory_order_relaxed), g_stick_y.load(std::memory_order_relaxed),
-                              g_throttle.load(std::memory_order_relaxed), g_brake.load(std::memory_order_relaxed),
-                              g_roll.load(std::memory_order_relaxed)};
-    flight::step(b, in, dt, g_simple.load(std::memory_order_relaxed));
+    const flight::Pad pad{g_stick_x.load(std::memory_order_relaxed), g_stick_y.load(std::memory_order_relaxed),
+                          g_rt.load(std::memory_order_relaxed), g_lt.load(std::memory_order_relaxed),
+                          g_lb.load(std::memory_order_relaxed)};
+    const bool simple = g_simple.load(std::memory_order_relaxed);
+    float lever       = g_lever.load(std::memory_order_relaxed);
+    const flight::Controls in = flight::controls(pad, simple, lever, dt);
+    g_lever.store(lever, std::memory_order_relaxed);
+    flight::step(b, in, dt, simple);
     if (!std::isfinite(b.vel.x + b.vel.y + b.vel.z + b.spin.x + b.spin.y + b.spin.z)) return;
+    g_speed.store(flight::len(b.vel), std::memory_order_relaxed);
+    g_height.store(reinterpret_cast<const float*>(dyn + DYN_POS)[1], std::memory_order_relaxed);
+    g_climb.store(v[1], std::memory_order_relaxed); // the game's own, before this update: gravity is already in it
+    g_heading.store(flight::heading(b.forward), std::memory_order_relaxed);
+    g_thrust.store(in.throttle, std::memory_order_relaxed);
 
     alignas(16) const float nv[4] = {b.vel.x, b.vel.y, b.vel.z, v[3]};
     alignas(16) const float nw[4] = {b.spin.x, b.spin.y, b.spin.z, w[3]};
@@ -181,6 +206,39 @@ bool code_ok() {
     return ok;
 }
 
+// ---- the flight HUD ----------------------------------------------------------------------------------------------------
+
+// Chips along the top of the game's HUD while flight is on: speed, height, heading and climb at the left, the
+// throttle as five dots at the right. From the worker, five times a second (which also keeps the layer's lease).
+void hud_tick() {
+    static bool shown;
+    if (!g_hud) return;
+    if (!g_flying.load() || !g_hud_on.load()) {
+        if (shown) g_hud->show_hud_layer(g_mod, 0);
+        shown = false;
+        return;
+    }
+    static const char* const kPoints[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    const int hdg = g_heading.load();
+    char spd[24], alt[24], dir[24], climb[24];
+    std::snprintf(spd, sizeof spd, "Spd %d km/h", static_cast<int>(std::lround(g_speed.load() * 3.6f)));
+    std::snprintf(alt, sizeof alt, "Alt %d m", static_cast<int>(std::lround(g_height.load())));
+    std::snprintf(dir, sizeof dir, "Hdg %03d %s", hdg, kPoints[(hdg + 22) % 360 / 45]);
+    std::snprintf(climb, sizeof climb, "Climb %+d m/s", static_cast<int>(std::lround(g_climb.load())));
+    FH2HudState s{};
+    s.size               = sizeof s;
+    s.chips[0].text      = spd;
+    s.chips[1].text      = alt;
+    s.chips[2].text      = dir;
+    s.chips[3].text      = climb;
+    s.corner.text        = "Throttle";
+    s.corner.dots        = FH2_HUD_MAX_CHIP_DOTS;
+    s.corner.dots_filled = static_cast<uint8_t>(std::lround(flight::clamp01(g_thrust.load()) * FH2_HUD_MAX_CHIP_DOTS));
+    g_hud->set_hud_state(g_mod, &s);
+    // Shown once each time flight goes on: if another mod's layer takes the screen after that, it keeps it.
+    if (!shown) shown = g_hud->show_hud_layer(g_mod, FH2_HUD_PART_CHIPS) != 0;
+}
+
 // ---- the controller ---------------------------------------------------------------------------------------------------
 
 float axis(SHORT v) {
@@ -215,10 +273,11 @@ DWORD WINAPI worker(void*) {
     auto get = x ? reinterpret_cast<XInputGetStateFn>(GetProcAddress(x, "XInputGetState")) : nullptr;
     if (!get) logf("XInput isn't there, so the controller can't be read: flight would have no controls.");
 
-    DWORD pad = 0, next_scan = 0;
+    DWORD pad = 0, next_scan = 0, tick = 0;
     bool have = false, said_fault = false;
     for (;;) {
         Sleep(8);
+        if (++tick % 25 == 0) hud_tick();
         if (g_fault.load() && !said_fault) {
             said_fault = true;
             g_api->set_setting(g_mod, "Flight", 0);
@@ -235,9 +294,9 @@ DWORD WINAPI worker(void*) {
         if (!have) st = XINPUT_STATE{};
         g_stick_x.store(axis(st.Gamepad.sThumbLX), std::memory_order_relaxed);
         g_stick_y.store(axis(st.Gamepad.sThumbLY), std::memory_order_relaxed);
-        g_throttle.store(st.Gamepad.bRightTrigger / 255.0f, std::memory_order_relaxed);
-        g_brake.store(st.Gamepad.bLeftTrigger / 255.0f, std::memory_order_relaxed);
-        g_roll.store((st.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0, std::memory_order_relaxed);
+        g_rt.store(st.Gamepad.bRightTrigger / 255.0f, std::memory_order_relaxed);
+        g_lt.store(st.Gamepad.bLeftTrigger / 255.0f, std::memory_order_relaxed);
+        g_lb.store((st.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0, std::memory_order_relaxed);
     }
 }
 
@@ -249,26 +308,41 @@ void on_hotkey(void*, const char*) { set_flying(!g_flying.load(), "the hotkey");
 // Writes fh2-mods\DoABarrelRoll.ini whole, from what the rows say now. On the UI thread (a row or a binding changed).
 void save_ini() {
     if (FILE* f = _wfopen(g_ini, L"w")) {
-        std::fprintf(f, "[Flight]\n; 1: simple controls (the stick turns the car; with LB held it rolls). 0: a plane's (the stick rolls)\n"
-                        "Simple=%d\n\n"
+        std::fprintf(f, "[Flight]\n; 1: simple controls (the stick turns the car; with LB held it rolls). 0: flight sim controls\n"
+                        "; (the stick rolls, the triggers move the throttle lever, and with LB held they're the rudder)\n"
+                        "Simple=%d\n; 1: speed, height, heading, climb and throttle along the top of the screen while flying\n"
+                        "Hud=%d\n\n"
                         "[Keys]\n; The key that turns flight on and off, as a Windows key code (120 = F9; 0 = none)\n"
                         "FlightKey=%u\n; Held with it: 1 Ctrl, 2 Shift, 4 Alt, added together\nFlightModifiers=%u\n"
-                        "; The controller buttons, held together, as XInput bits (769 = LB+RB+d-pad up; 0 = none)\n"
+                        "; The controller buttons, held together, as XInput bits (257 = LB+d-pad up; 0 = none)\n"
                         "FlightPad=%u\n\n"
                         "[Updates]\n; 0: don't check GitHub for a newer version when the game starts\nCheckUpdates=%d\n",
-                     g_simple.load() ? 1 : 0, g_vk, g_mods, g_pad, g_check_updates);
+                     g_simple.load() ? 1 : 0, g_hud_on.load() ? 1 : 0, g_vk, g_mods, g_pad, g_check_updates);
         std::fclose(f);
     }
 }
 
 void on_simple_row(void*, const char*, int value) {
     g_simple.store(value != 0);
-    logf("Simple controls are %s.", value ? "on: the stick turns the car, and rolls it while LB is held" : "off: the stick rolls the car, as a plane's does");
+    logf("Simple controls are %s.", value ? "on: the stick turns the car, and rolls it while LB is held"
+                                          : "off: flight sim controls, with a throttle lever and a rudder");
     save_ini();
 }
 
+void on_hud_row(void*, const char*, int value) {
+    g_hud_on.store(value != 0);
+    logf("The flight HUD is %s.", value ? "on" : "off");
+    save_ini();
+}
+
+// The default buttons are LB with d-pad up. A pad layer keeps that d-pad up from the game while LB is held (the
+// hotkey itself still fires: the platform reads the controller for it); with other buttons the layer is off.
+constexpr uint32_t kDefaultPad = FH2_PAD_LB | FH2_PAD_DPAD_UP;
+void on_layer_press(void*, const char*, uint32_t) {}
+
 void on_rebind(void*, const char*, uint32_t vk, uint32_t mods, uint32_t pad) {
     g_vk = vk, g_mods = mods, g_pad = pad;
+    if (g_padlayer) g_padlayer->set_modifier(g_mod, "Flight", pad == kDefaultPad ? FH2_PAD_LB : 0);
     save_ini();
 }
 
@@ -297,9 +371,10 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     info.github_repo      = "Trinculo54/DoABarrelRoll";
     info.check_updates    = g_check_updates;
     info.platform_version = FH2MOD_PLATFORM_VERSION;
-    info.description      = "Your car flies like a plane. Turn flight on with F9 or LB+RB+d-pad up, get above 144 km/h "
+    info.description      = "Your car flies like a plane. Turn flight on with F9 or LB+d-pad up, get above 144 km/h "
                             "and pull back on the left stick. Back climbs, forward dives, left and right turn. RT is "
-                            "thrust, LT an air brake; hold LB and the stick rolls. Offline only.";
+                            "thrust, LT an air brake; hold LB and the stick rolls. Turn Simple controls off for "
+                            "flight sim controls. Offline only.";
     info.offline_only     = 1;
     g_mod = api->register_mod(&info);
     if (!g_mod) return 0;
@@ -323,15 +398,16 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     simple.key         = "Simple";
     simple.label       = "Simple controls";
     simple.description = "On: left and right on the stick turn the car. It banks and levels out by itself; hold LB and "
-                         "the stick rolls it, for a barrel roll. Off: left and right roll the car, as a plane's stick "
-                         "does, and you turn by rolling and pulling back.";
+                         "the stick rolls it, for a barrel roll. Off: flight sim controls. The stick pitches and rolls, "
+                         "RT and LT move a throttle that stays where you leave it (LT is the air brake too), and with "
+                         "LB held RT and LT are the rudder.";
     simple.value       = g_simple.load() ? 1 : 0;
     simple.on_change   = &on_simple_row;
     api->add_setting(g_mod, &simple);
 
     g_vk   = GetPrivateProfileIntW(L"Keys", L"FlightKey", VK_F9, g_ini);
     g_mods = GetPrivateProfileIntW(L"Keys", L"FlightModifiers", 0, g_ini);
-    g_pad  = GetPrivateProfileIntW(L"Keys", L"FlightPad", FH2_PAD_LB | FH2_PAD_RB | FH2_PAD_DPAD_UP, g_ini);
+    g_pad  = GetPrivateProfileIntW(L"Keys", L"FlightPad", kDefaultPad, g_ini);
     FH2Hotkey hk{};
     hk.size      = sizeof hk;
     hk.key       = "Flight";
@@ -343,6 +419,41 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     hk.on_rebind = &on_rebind;
     api->add_hotkey(g_mod, &hk);
     if (api->api_version >= 10) api->ui_uses(g_mod, FH2_UI_USES_TOASTS);
+
+    // Both are preview interfaces of platform 2.9.0; without them the mod flies the same, with no HUD of its own
+    // and with d-pad up reaching the game.
+    g_padlayer = static_cast<const FH2PadInterface*>(api->get_interface(FH2_PAD_INTERFACE, FH2_PAD_INTERFACE_VERSION));
+    if (g_padlayer) {
+        FH2PadLayer layer{sizeof layer};
+        layer.key      = "Flight";
+        layer.modifier = g_pad == kDefaultPad ? FH2_PAD_LB : 0;
+        layer.buttons  = FH2_PAD_DPAD_UP;
+        layer.on_press = &on_layer_press;
+        if (!g_padlayer->add_layer(g_mod, &layer)) g_padlayer = nullptr;
+    }
+    g_hud = static_cast<const FH2HudInterface*>(api->get_interface(FH2_HUD_INTERFACE, FH2_HUD_INTERFACE_VERSION));
+    if (g_hud && g_hud->size >= sizeof(FH2HudInterface)) {
+        FH2HudLayer layer{};
+        layer.size     = sizeof layer;
+        layer.parts    = FH2_HUD_PART_CHIPS;
+        layer.lease_ms = 2000;
+        if (!g_hud->add_hud_layer(g_mod, &layer)) g_hud = nullptr;
+    } else {
+        g_hud = nullptr;
+    }
+    if (!g_hud) api->log(g_mod, "This platform has no HUD layer for the mod, so there's no flight HUD; flying is the same.");
+    g_hud_on.store(GetPrivateProfileIntW(L"Flight", L"Hud", 1, g_ini) != 0);
+    if (g_hud) {
+        FH2Setting hud{};
+        hud.size        = sizeof hud;
+        hud.key         = "Hud";
+        hud.label       = "Flight HUD";
+        hud.description = "On: while flight is on, the top of the screen shows your speed, height, compass heading and "
+                          "climb, and the throttle as five dots.";
+        hud.value       = g_hud_on.load() ? 1 : 0;
+        hud.on_change   = &on_hud_row;
+        api->add_setting(g_mod, &hud);
+    }
 
     if (HANDLE t = CreateThread(nullptr, 0, &worker, nullptr, 0, nullptr)) CloseHandle(t);
     else api->log(g_mod, "Do A Barrel Roll couldn't start its thread, so it's off.");
