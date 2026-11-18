@@ -8,6 +8,7 @@
 
 #include "flight.hpp"
 #include "gui.hpp"
+#include "sound.hpp"
 
 using namespace flight;
 
@@ -219,6 +220,32 @@ int main(int argc, char** argv) {
     check(count("Text=\"650\"") == 1 && count("Text=\"3000\"") == 1 && count("Text=\"-200\"") == 1 && count("Text=\"N\"") == 2 &&
               count("Text=\"90\"") == 2,
           "instruments: the speed tape has its 650 km/h, the height tape runs from -200 to 3000 m, the compass has north twice, the ladder 90 up and down");
+    // ---- the warning sounds ----
+    using sound::warnings;
+    check(!warnings(true, 60, -29).pull_up && warnings(true, 60, -31).pull_up && !warnings(false, 60, -80).pull_up,
+          "warnings: \"pull up\" when the car sinks faster than 30 m/s, and only while it's being flown");
+    check(warnings(true, 30, -8).low_speed && !warnings(true, 30, -2).low_speed && !warnings(true, 45, -8).low_speed && !warnings(false, 30, -8).low_speed,
+          "warnings: the low speed tone under 144 km/h and sinking, not on a drive down a hill, not at flying speed");
+    check(warnings(true, 20, -40).pull_up && warnings(true, 20, -40).low_speed, "warnings: falling slowly out of the sky sounds both");
+    check(sound::towards(0, 1, 6, 0.1f) == 0.6f && sound::towards(0.9f, 1, 6, 0.1f) == 1 && sound::towards(1, 0, 6, 0.05f) == 0.7f,
+          "warnings: the tone's volume moves in steps, never past its target");
+    {
+        // a WAV as a sound editor writes it: 16-bit mono at 22050 Hz, a LIST chunk before the samples, 5 bytes of them
+        uint8_t wav[64] = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 1, 0, 0x22, 0x56, 0, 0,
+                           0x44, 0xAC, 0, 0, 2, 0, 16, 0, 'L', 'I', 'S', 'T', 3, 0, 0, 0, 'a', 'b', 'c', 0, 'd', 'a', 't', 'a', 5, 0, 0, 0, 1, 2, 3, 4, 5};
+        sound::Wav w;
+        const char* why = "";
+        check(sound::parse_wav(wav, 61, w, why) && w.tag == 1 && w.channels == 1 && w.rate == 22050 && w.bits == 16 && w.fmt_size == 16 &&
+                  w.data == wav + 56 && w.data_size == 4,
+              "warnings: a WAV file is read past its other chunks, and its samples cut to whole frames");
+        check(!sound::parse_wav(wav, 40, w, why) && std::strstr(why, "no samples") && !sound::parse_wav(wav, 8, w, why) && std::strstr(why, "isn't a WAV"),
+              "warnings: a file cut short before its samples, or too short to be one, isn't used");
+        wav[20] = 0x55;   // MP3 in a WAV
+        check(!sound::parse_wav(wav, 61, w, why) && std::strstr(why, "compressed"), "warnings: compressed samples aren't used, and the reason says so");
+        wav[20] = 1, wav[22] = 6;
+        check(!sound::parse_wav(wav, 61, w, why) && std::strstr(why, "mono or stereo"), "warnings: nor is a file with six channels");
+    }
+
     if (argc > 1) {
         if (FILE* f = std::fopen(argv[1], "wb")) {
             std::fwrite(xaml.data(), 1, xaml.size(), f);

@@ -110,6 +110,26 @@ Labels (the same readings as plain numbers along the top of the screen)
 or Off.
 
 
+Warning sounds
+~~~~~~~~~~~~~~
+
+The mod can sound a cockpit's warnings while you fly, from sound files of
+your own: it comes with none. Put WAV files with these names in
+fh2-mods\DoABarrelRoll\sounds (the folder is made the first time the game
+starts with the mod, with a README.txt that lists them):
+
+  pull_up.wav      a warning voice: while the car sinks faster than
+                   30 m/s, again every 3 seconds
+  low_speed.wav    a warning tone, looped: while the car is too slow to
+                   fly (under 144 km/h) and sinking
+
+Any WAV with plain (PCM or float) samples works, mono or stereo. They're
+read when the game starts, and play only while flight is on and the game
+isn't paused. The mod doesn't know how far below the ground is, so both
+warnings go by how fast the car is sinking. The "Warning sounds" row on
+the mod's page sets how loud they are.
+
+
 What each button does while flying
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -137,6 +157,7 @@ On the mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll):
                       levels itself. Off: flight sim controls
   Flight HUD          what shows while flight is on: Instruments (the
                       default), Labels or Off
+  Warning sounds      how loud the warning sounds are, 0 (off) to 100
   Keys and buttons    the key and the controller buttons that turn
                       flight on and off. With other buttons than
                       LB + d-pad up the game sees them too: avoid RB
@@ -147,6 +168,7 @@ time you change one, with a comment next to each setting:
 
   Simple=1            0 = flight sim controls
   Hud=2               the flight HUD: 0 none, 1 labels, 2 instruments
+  Volume=60           the warning sounds, 0 to 100
   FlightKey=120       the key, as a Windows key code (120 = F9)
   FlightModifiers=0   held with it: 1 Ctrl, 2 Shift, 4 Alt, added up
   FlightPad=257       the controller buttons (257 = LB+d-pad up)

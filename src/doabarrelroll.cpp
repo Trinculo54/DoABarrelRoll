@@ -11,6 +11,7 @@
 // byte-checked first; on a mismatch the mod says so in its log and stays off.
 
 #include <windows.h>
+#include <xaudio2.h>
 #include <xinput.h>
 
 #include <atomic>
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <string>
+#include <vector>
 
 #include "fh2_version.h"
 #include "fh2game.h"
@@ -29,6 +31,7 @@
 #include "fh2mod_pad.h"
 #include "flight.hpp"
 #include "gui.hpp"
+#include "sound.hpp"
 
 namespace {
 
@@ -95,6 +98,9 @@ const FH2HudInterface* g_hud;      // null: no HUD layer on this platform, and n
 const FH2PadInterface* g_padlayer; // null: no pad layers, so the game sees d-pad up with LB too
 bool g_canvas;                     // the platform took the flight instruments' canvas (HUD layer interface 3)
 std::atomic<int> g_hud_mode{2};    // the Flight HUD row: 0 off, 1 labels, 2 instruments
+std::atomic<DWORD> g_flown{0};      // GetTickCount at the car's last update with flight on: none for a while = paused
+std::atomic<float> g_volume{0.6f};  // the Warning sounds row, 0 to 1
+wchar_t g_sounds[MAX_PATH];         // fh2-mods\DoABarrelRoll\sounds\, beside this DLL
 wchar_t g_ini[MAX_PATH];
 uint32_t g_vk, g_mods, g_pad; // the flight hotkey, as saved
 int g_check_updates = 1;      // CheckUpdates, as saved
@@ -172,6 +178,7 @@ __attribute__((noinline)) void fly(void* car, float dt) {
     g_climb.store(v[1], std::memory_order_relaxed); // the game's own, before this update: gravity is already in it
     g_heading.store(flight::heading(b.forward), std::memory_order_relaxed);
     g_thrust.store(in.throttle, std::memory_order_relaxed);
+    g_flown.store(GetTickCount(), std::memory_order_relaxed);
 
     alignas(16) const float nv[4] = {b.vel.x, b.vel.y, b.vel.z, v[3]};
     alignas(16) const float nw[4] = {b.spin.x, b.spin.y, b.spin.z, w[3]};
@@ -260,6 +267,147 @@ void hud_tick() {
     if (want != shown && (g_hud->show_hud_layer(g_mod, want) || !want)) shown = want;
 }
 
+// ---- the warning sounds -----------------------------------------------------------------------------------------------
+
+// The cockpit warnings of src/sound.hpp, played through XAudio2 on the worker thread: nothing of the game's own
+// sound is touched. They are WAV files of the player's own, read once as the game starts. With none there, no
+// sound engine is made at all.
+struct Voice {
+    std::vector<uint8_t> file;
+    sound::Wav wav;
+    IXAudio2SourceVoice* voice = nullptr;
+    float volume  = 0;
+    bool playing  = false, said = false;
+};
+Voice g_voice[sound::kSounds];
+IXAudio2* g_xaudio;
+IXAudio2MasteringVoice* g_master;
+
+bool submit(Voice& v, bool loop) {
+    XAUDIO2_BUFFER b{};
+    b.Flags      = XAUDIO2_END_OF_STREAM;
+    b.AudioBytes = v.wav.data_size;
+    b.pAudioData = v.wav.data;
+    b.LoopCount  = loop ? XAUDIO2_LOOP_INFINITE : 0;
+    return SUCCEEDED(v.voice->SubmitSourceBuffer(&b));
+}
+
+// The folder (made, with a README that lists the files, the first time), the files, and the sound engine if any
+// file is there. The worker thread, once.
+void sounds_start() {
+    CreateDirectoryW(std::wstring(g_sounds, wcslen(g_sounds) - 8).c_str(), nullptr);   // ...\DoABarrelRoll
+    CreateDirectoryW(g_sounds, nullptr);
+    const std::wstring readme = std::wstring(g_sounds) + L"README.txt";
+    if (GetFileAttributesW(readme.c_str()) == INVALID_FILE_ATTRIBUTES)
+        if (FILE* f = _wfopen(readme.c_str(), L"w")) {
+            std::fprintf(f, "Do A Barrel Roll: warning sounds\n\nThe mod comes with no sounds. Put WAV files of your own in this folder (a fighter's warning voice\n"
+                            "and tones, say), with these names, and they sound while flight is on. A warning with no file here is\n"
+                            "simply not sounded. They're read when the game starts.\n\n");
+            for (const sound::Slot& s : sound::kSlots) std::fprintf(f, "  %-15s %s\n", s.file, s.what);
+            std::fprintf(f, "\nAny WAV with plain (PCM or float) samples works, mono or stereo. The tone is looped, so it should start\n"
+                            "and end at the same point of the sound, or it clicks each time round. The mod doesn't know how far the\n"
+                            "ground is, so both warnings go by how fast the car is sinking. How loud they are is the Warning sounds\n"
+                            "row on the mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll).\n");
+            std::fclose(f);
+        }
+    int loaded = 0;
+    for (int i = 0; i < sound::kSounds; ++i) {
+        Voice& v = g_voice[i];
+        wchar_t name[32];
+        MultiByteToWideChar(CP_UTF8, 0, sound::kSlots[i].file, -1, name, 32);
+        FILE* f = _wfopen((std::wstring(g_sounds) + name).c_str(), L"rb");
+        if (!f) continue;
+        std::fseek(f, 0, SEEK_END);
+        const long size = std::ftell(f);
+        std::fseek(f, 0, SEEK_SET);
+        const char* why = "it's empty, or over 64 MB";
+        if (size > 0 && size <= 64 * 1024 * 1024) {
+            v.file.resize(static_cast<size_t>(size));
+            if (std::fread(v.file.data(), 1, v.file.size(), f) != v.file.size()) why = "it couldn't be read";
+            else if (sound::parse_wav(v.file.data(), v.file.size(), v.wav, why)) why = nullptr;
+        }
+        std::fclose(f);
+        if (why) {
+            logf("Warning sounds: %s isn't used: %s.", sound::kSlots[i].file, why);
+            v.file.clear();
+        } else {
+            ++loaded;
+        }
+    }
+    if (!loaded) {
+        logf("Warning sounds: no WAV files in fh2-mods\\DoABarrelRoll\\sounds, so there are none. README.txt there lists the files it plays.");
+        return;
+    }
+    using CreateFn = HRESULT(WINAPI*)(IXAudio2**, UINT32, XAUDIO2_PROCESSOR);
+    HMODULE x = LoadLibraryExW(L"xaudio2_9.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!x) x = LoadLibraryExW(L"xaudio2_8.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    const auto create = x ? reinterpret_cast<CreateFn>(GetProcAddress(x, "XAudio2Create")) : nullptr;
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (!create || FAILED(create(&g_xaudio, 0, XAUDIO2_DEFAULT_PROCESSOR)) || FAILED(g_xaudio->CreateMasteringVoice(&g_master))) {
+        logf("Warning sounds: Windows' sound engine (XAudio2) couldn't be started, so there are none.");
+        g_xaudio = nullptr;
+        return;
+    }
+    std::string names;
+    for (int i = 0; i < sound::kSounds; ++i) {
+        Voice& v = g_voice[i];
+        if (v.file.empty()) continue;
+        alignas(8) uint8_t fmt[40] = {};   // a WAVEFORMATEXTENSIBLE's size: a plain PCM chunk leaves cbSize 0
+        std::memcpy(fmt, v.wav.fmt, v.wav.fmt_size);
+        if (FAILED(g_xaudio->CreateSourceVoice(&v.voice, reinterpret_cast<const WAVEFORMATEX*>(fmt))) || (sound::kSlots[i].loops && !submit(v, true))) {
+            logf("Warning sounds: %s isn't used: the sound engine didn't take its format.", sound::kSlots[i].file);
+            v.voice = nullptr;
+            continue;
+        }
+        v.voice->SetVolume(0);
+        names += (names.empty() ? "" : ", ") + std::string(sound::kSlots[i].file);
+    }
+    logf("Warning sounds: %s.", names.empty() ? "none of the files could be used" : ("ready: " + names).c_str());
+}
+
+void play_once(int which) {
+    Voice& v = g_voice[which];
+    if (!v.voice) return;
+    v.voice->Stop();
+    v.voice->FlushSourceBuffers();
+    if (!submit(v, false)) return;
+    v.voice->SetVolume(1);
+    v.voice->Start();
+    if (!v.said) logf("Warning sounds: %s sounded (said once a session).", sound::kSlots[which].file);
+    v.said = true;
+}
+
+// The looped tone at `volume`, stopped while it's silent.
+void play_loop(int which, float volume) {
+    Voice& v = g_voice[which];
+    if (!v.voice) return;
+    v.voice->SetVolume(volume);
+    if (volume > 0 && !v.playing) {
+        v.voice->Start();
+        if (!v.said) logf("Warning sounds: %s sounded (said once a session).", sound::kSlots[which].file);
+        v.said = true;
+    }
+    if (volume <= 0 && v.playing) v.voice->Stop();
+    v.playing = volume > 0;
+}
+
+// About 30 times a second on the worker thread. A warning only sounds while the car is being flown: flight on and
+// its update running, so not while the game is paused or in a menu.
+void sounds_tick(float dt) {
+    if (!g_xaudio) return;
+    static float tone, since_pull_up = sound::kPullUpEvery;
+    const bool active       = g_flying.load() && GetTickCount() - g_flown.load() < 300;
+    const sound::Warnings w = sound::warnings(active, g_speed.load(), g_climb.load());
+    g_master->SetVolume(g_volume.load());
+    tone = sound::towards(tone, w.low_speed ? 1.0f : 0.0f, sound::kFade, dt);
+    play_loop(sound::kLowSpeed, tone);
+    since_pull_up += dt;
+    if (w.pull_up && since_pull_up >= sound::kPullUpEvery) {
+        since_pull_up = 0;
+        play_once(sound::kPullUp);
+    }
+}
+
 // ---- the controller ---------------------------------------------------------------------------------------------------
 
 float axis(SHORT v) {
@@ -294,11 +442,16 @@ DWORD WINAPI worker(void*) {
     auto get = x ? reinterpret_cast<XInputGetStateFn>(GetProcAddress(x, "XInputGetState")) : nullptr;
     if (!get) logf("XInput isn't there, so the controller can't be read: flight would have no controls.");
 
-    DWORD pad = 0, next_scan = 0, tick = 0;
+    sounds_start();
+    DWORD pad = 0, next_scan = 0, tick = 0, sounds_at = GetTickCount();
     bool have = false, said_fault = false;
     for (;;) {
         Sleep(8);
         if (++tick % 25 == 0) hud_tick();
+        if (const DWORD now = GetTickCount(); now - sounds_at >= 30) {
+            sounds_tick(static_cast<float>(now - sounds_at) / 1000.0f);
+            sounds_at = now;
+        }
         if (g_fault.load() && !said_fault) {
             said_fault = true;
             g_api->set_setting(g_mod, "Flight", 0);
@@ -343,12 +496,14 @@ void save_ini() {
                         "Simple=%d\n; The flight HUD while flying. 0: none. 1: labels along the top of the screen. 2: flight instruments\n"
                         "; (an artificial horizon, speed and height tapes, a compass; they need FH2 Mod Platform 2.9.1)\n"
                         "Hud=%d\n\n"
+                        "[Sounds]\n; How loud the warning sounds are, 0 to 100. They're WAV files of your own in fh2-mods\\DoABarrelRoll\\sounds\n"
+                        "Volume=%d\n\n"
                         "[Keys]\n; The key that turns flight on and off, as a Windows key code (120 = F9; 0 = none)\n"
                         "FlightKey=%u\n; Held with it: 1 Ctrl, 2 Shift, 4 Alt, added together\nFlightModifiers=%u\n"
                         "; The controller buttons, held together, as XInput bits (257 = LB+d-pad up; 0 = none)\n"
                         "FlightPad=%u\n\n"
                         "[Updates]\n; 0: don't check GitHub for a newer version when the game starts\nCheckUpdates=%d\n",
-                     g_simple.load() ? 1 : 0, g_hud_mode.load(), g_vk, g_mods, g_pad, g_check_updates);
+                     g_simple.load() ? 1 : 0, g_hud_mode.load(), static_cast<int>(std::lround(g_volume.load() * 100)), g_vk, g_mods, g_pad, g_check_updates);
         std::fclose(f);
     }
 }
@@ -357,6 +512,11 @@ void on_simple_row(void*, const char*, int value) {
     g_simple.store(value != 0);
     logf("Simple controls are %s.", value ? "on: the stick turns the car, and rolls it while LB is held"
                                           : "off: flight sim controls, with a throttle lever and a rudder");
+    save_ini();
+}
+
+void on_volume(void*, const char*, float value) {
+    g_volume.store(flight::clamp01(value / 100));
     save_ini();
 }
 
@@ -388,7 +548,9 @@ void find_ini() {
     DWORD n = GetModuleFileNameW(self, g_ini, MAX_PATH);
     while (n && g_ini[n - 1] != L'\\') --n;
     g_ini[n] = 0;
+    wcsncpy(g_sounds, g_ini, MAX_PATH);
     wcsncat(g_ini, L"DoABarrelRoll.ini", MAX_PATH - n - 1);
+    wcsncat(g_sounds, L"DoABarrelRoll\\sounds\\", MAX_PATH - n - 1);
 }
 
 } // namespace
@@ -438,6 +600,22 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     simple.value       = g_simple.load() ? 1 : 0;
     simple.on_change   = &on_simple_row;
     api->add_setting(g_mod, &simple);
+
+    g_volume.store(flight::clamp01(static_cast<float>(GetPrivateProfileIntW(L"Sounds", L"Volume", 60, g_ini)) / 100));
+    FH2Setting vol{};
+    vol.size         = sizeof vol;
+    vol.key          = "Volume";
+    vol.label        = "Warning sounds";
+    vol.description  = "How loud the cockpit warnings are: a voice when you're sinking fast, a tone when you're too slow to "
+                       "fly. They're WAV files of your own in fh2-mods\\DoABarrelRoll\\sounds (README.txt there lists them); "
+                       "none come with the mod.";
+    vol.kind         = FH2_SETTING_SLIDER;
+    vol.min          = 0;
+    vol.max          = 100;
+    vol.step         = 5;
+    vol.slider_value = g_volume.load() * 100;
+    vol.on_slide     = &on_volume;
+    api->add_setting(g_mod, &vol);
 
     g_vk   = GetPrivateProfileIntW(L"Keys", L"FlightKey", VK_F9, g_ini);
     g_mods = GetPrivateProfileIntW(L"Keys", L"FlightModifiers", 0, g_ini);

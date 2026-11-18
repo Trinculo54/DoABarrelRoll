@@ -80,6 +80,22 @@ head-up display:
 The **Flight HUD** row on the mod's page picks what shows: **Instruments**, **Labels** (the same readings as
 plain numbers along the top of the screen, with the throttle as five dots) or **Off**.
 
+### Warning sounds
+
+The mod can sound a cockpit's warnings while you fly, from sound files of your own: it comes with none. Put WAV
+files with these names in `fh2-mods\DoABarrelRoll\sounds` (the folder is made the first time the game starts
+with the mod, with a `README.txt` that lists them):
+
+| File | When it sounds |
+|---|---|
+| `pull_up.wav` | A warning voice: while the car sinks faster than 30 m/s, again every 3 seconds |
+| `low_speed.wav` | A warning tone, looped: while the car is too slow to fly (under 144 km/h) and sinking |
+
+Any WAV with plain (PCM or float) samples works, mono or stereo. They're read when the game starts, play only
+while flight is on and the game isn't paused, and are mixed by Windows beside the game's own sound. The mod
+doesn't know how far below the ground is, so both warnings go by how fast the car is sinking. The **Warning
+sounds** row on the mod's page sets how loud they are.
+
 ### What each button does while flying
 
 The mod only reads the controls the game doesn't need in the air, so nothing does two things at once:
@@ -104,6 +120,7 @@ On the mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll):
 | Flight | Turns flight on and off, like the hotkey. Starts Off each time the game starts |
 | Simple controls | On (the default): the stick turns the car and it levels itself. Off: [flight sim controls](#flight-sim-controls) |
 | Flight HUD | What shows while flight is on: Instruments (the default), Labels or Off. See [the flight HUD](#the-flight-hud) |
+| Warning sounds | How loud [the warning sounds](#warning-sounds) are, from 0 (off) to 100 |
 | Keys and buttons | The key and the controller buttons that turn flight on and off. With other buttons than LB + d-pad up, the game sees them too: avoid RB (the camera) and Y (rewind) |
 
 They're saved in `fh2-mods\DoABarrelRoll.ini`, which is written the first time you change one. Each key has a
@@ -143,6 +160,8 @@ The mod logs to `fh2-mods\platform.log`, as lines starting `[Do A Barrel Roll]`.
   or another mod changed that code first. The platform's lines just above say which.
 - **No pop-up when flight goes on:** pop-ups need platform 2.9.0, and follow the game's notification option and
   the "Pop-ups" row on the mod's page. Flight works without them.
+- **No warning sounds:** the log says which files it found ("Warning sounds: ready: ...") or why one isn't used
+  (it's compressed, say: save it as plain PCM). Check the **Warning sounds** row isn't at 0.
 - **No flight HUD:** check the **Flight HUD** row. If it has no Instruments, the log says "The flight instruments
   need FH2 Mod Platform 2.9.1", and if there's no such row, "This platform has no HUD layer for the mod":
   another mod's zip put an older platform back, so extract this zip again. Lines starting `[HUD layer]` in
