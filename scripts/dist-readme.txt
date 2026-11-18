@@ -34,16 +34,17 @@ DWrite.dll, older versions d3dcompiler_47.dll. It loads every mod in
 fh2-mods. Each mod's zip ships the platform it was built with, so extract
 the zip with the newest platform last.
 
-This zip has platform 2.9.0, and Do A Barrel Roll runs on 2.8.0 or newer
-(its pop-ups need 2.9.0). If platform.log says it "needs FH2 Mod Platform
-2.8.0 or newer", another mod's zip put an older platform back: extract
-this zip again.
+This zip has platform 2.9.1, and Do A Barrel Roll runs on 2.8.0 or newer
+(its pop-ups and the labels HUD need 2.9.0, its flight instruments
+2.9.1). If platform.log says it "needs FH2 Mod Platform 2.8.0 or
+newer", another mod's zip put an older platform back: extract this zip
+again.
 
 
 Flying
 ~~~~~~
 
-1. Turn flight on: F9 on the keyboard, or LB + RB + d-pad up on the
+1. Turn flight on: F9 on the keyboard, or LB + d-pad up on the
    controller. The Flight row on the mod's page (Pause > MODS > YOUR MODS
    > Do A Barrel Roll) does the same. A pop-up says when it's on or off.
 2. Get going. Below 90 km/h the car drives as usual. From there it starts
@@ -68,26 +69,110 @@ Flight starts Off each time the game starts. It only ever moves your own
 car, never traffic or Drivatars.
 
 
+Flight sim controls
+~~~~~~~~~~~~~~~~~~~
+
+Turn "Simple controls" off on the mod's page and the car flies with a
+plane's full set of controls. Nothing levels it for you, and its lift
+points out of its roof, so you turn by rolling and pulling back.
+
+  Left stick back / forward    elevator: nose up / nose down
+  Left stick left or right     ailerons: roll
+  RT                           throttle up; let go and it stays
+  LT                           throttle down, and the air brake while
+                               it's held
+  LB held, RT / LT             rudder: nose right / nose left; the
+                               throttle stays as it was
+
+The throttle starts closed each time flight goes on. Each setting has a
+speed the car settles at: about 450 km/h in level flight at full
+throttle. With the throttle closed the car glides, slows and comes down.
+
+
+The flight HUD
+~~~~~~~~~~~~~~
+
+While flight is on, the screen has flight instruments, drawn in the
+game's own HUD in the green of a real head-up display:
+
+  - an artificial horizon round the middle of the screen. The long line
+    is the horizon, the short lines are every 5 degrees of pitch, and
+    the two bars and the dot in the middle are your car. It turns
+    against your bank and slides with your pitch, as a plane's does.
+    The marks along its top are the bank scale, with a pointer under it;
+  - a speed tape on its left, in km/h, with the throttle as a bar
+    beside it;
+  - a height tape on its right, in the game world's own metres, with
+    the climb in metres a second under it;
+  - a compass tape above it, with your heading in degrees.
+
+The "Flight HUD" row on the mod's page picks what shows: Instruments,
+Labels (the same readings as plain numbers along the top of the screen)
+or Off.
+
+
+Warning sounds
+~~~~~~~~~~~~~~
+
+The mod can sound a cockpit's warnings while you fly, from sound files of
+your own: it comes with none. Put WAV files with these names in
+fh2-mods\DoABarrelRoll\sounds (the folder is made the first time the game
+starts with the mod, with a README.txt that lists them):
+
+  pull_up.wav      a warning voice: while the car sinks faster than
+                   30 m/s, again every 3 seconds
+  low_speed.wav    a warning tone, looped: while the car is too slow to
+                   fly (under 144 km/h) and sinking
+
+Any WAV with plain (PCM or float) samples works, mono or stereo. They're
+read when the game starts, and play only while flight is on and the game
+isn't paused. The mod doesn't know how far below the ground is, so both
+warnings go by how fast the car is sinking. The "Warning sounds" row on
+the mod's page sets how loud they are.
+
+
+What each button does while flying
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The mod only reads the controls the game doesn't need in the air:
+
+  Left stick        flies the car (the game: steering)
+  RT / LT           thrust or throttle / air brake (the game: pedals)
+  LB                held: the stick rolls (simple controls), or RT and
+                    LT are the rudder (flight sim controls). The game:
+                    the clutch, only with manual with clutch
+  LB + d-pad up     flight on or off; the game doesn't see this d-pad up
+
+Everything else is left to the game: RB still changes the camera, the
+right stick still looks around, Y still rewinds, and A, B, X, the d-pad,
+the stick clicks, View and Menu do what they always do.
+
+
 Settings
 ~~~~~~~~
 
 On the mod's page (Pause > MODS > YOUR MODS > Do A Barrel Roll):
 
   Flight              turns flight on and off, like the hotkey
-  Simple controls     On (the default): the controls above. Off: a
-                      plane's controls. Left and right on the stick roll
-                      the car, nothing levels it for you, and you turn by
-                      rolling and pulling back
+  Simple controls     On (the default): the stick turns the car and it
+                      levels itself. Off: flight sim controls
+  Flight HUD          what shows while flight is on: Instruments (the
+                      default), Labels or Off
+  Warning sounds      how loud the warning sounds are, 0 (off) to 100
   Keys and buttons    the key and the controller buttons that turn
-                      flight on and off
+                      flight on and off. With other buttons than
+                      LB + d-pad up the game sees them too: avoid RB
+                      (the camera) and Y (rewind)
 
 They're saved in fh2-mods\DoABarrelRoll.ini, which is written the first
 time you change one, with a comment next to each setting:
 
-  Simple=1            0 = a plane's controls
+  Simple=1            0 = flight sim controls
+  Hud=2               the flight HUD: 0 none, 1 labels, 2 instruments
+  Volume=60           the warning sounds, 0 to 100
   FlightKey=120       the key, as a Windows key code (120 = F9)
   FlightModifiers=0   held with it: 1 Ctrl, 2 Shift, 4 Alt, added up
-  FlightPad=769       the controller buttons (769 = LB+RB+d-pad up)
+  FlightPad=257       the controller buttons (257 = LB+d-pad up)
   CheckUpdates=1      0 = don't check GitHub for a newer version
 
 When a newer version is out, the title screen says so after
@@ -101,9 +186,20 @@ Good to know
     platform doesn't load the mod.
   - The keyboard can turn flight on and off, but flying needs a
     controller.
+  - The key and the buttons for flight only work while you're driving,
+    not in a menu, the map or photo mode. The Flight row works anywhere.
+  - The hood and bumper cameras stay through a roll. The game takes
+    those two views to the chase camera whenever a car goes onto its
+    side or roof; with flight on the mod skips that, so a barrel roll
+    or a loop keeps the view you chose.
   - LB is the game's clutch. That does nothing in the air, but if you
     drive manual with clutch, holding LB on the ground with flight on
     still works the clutch.
+  - The triggers are still the car's pedals. In the air the wheels just
+    spin or stop; on the ground with flight on, RT also drives the car
+    and LT also brakes it.
+  - If another mod puts its own bar or labels on the screen, the flight
+    HUD makes way until flight is next turned on.
   - Rewind isn't handled: flight carries on through the game's rewind.
     Turn flight off first if it gets odd.
   - Pulling back hard near the ground at speed can tip the car over
@@ -131,6 +227,10 @@ fh2-mods\crashes.
   - No pop-up when flight goes on: pop-ups need platform 2.9.0, and
     follow the game's notification option and the "Pop-ups" row on the
     mod's page. Flight works without them.
+  - No flight HUD: check the "Flight HUD" row. If it has no Instruments,
+    or there's no such row, another mod's zip put an older platform
+    back (the instruments need platform 2.9.1, the labels 2.9.0):
+    extract this zip again.
 
 
 Uninstall

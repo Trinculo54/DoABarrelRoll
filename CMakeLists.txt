@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(doabarrelroll VERSION 1.0.0 LANGUAGES C CXX RC)
+project(doabarrelroll VERSION 1.2.0 LANGUAGES C CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,7 +27,7 @@ configure_file(cmake/version.h.in ${CMAKE_BINARY_DIR}/generated/fh2_version.h)
 # The mod: fh2-mods\DoABarrelRoll.dll
 add_library(doabarrelroll SHARED src/doabarrelroll.cpp src/version.rc)
 target_include_directories(doabarrelroll PRIVATE ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(doabarrelroll PRIVATE fh2mod_api)
+target_link_libraries(doabarrelroll PRIVATE fh2mod_api ole32)
 set_target_properties(doabarrelroll PROPERTIES OUTPUT_NAME DoABarrelRoll PREFIX "")
 # The version resource reads the generated header: rebuild it when the version changes.
 set_source_files_properties(src/version.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_BINARY_DIR}/generated/fh2_version.h)
