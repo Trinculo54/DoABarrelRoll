@@ -46,6 +46,7 @@ constexpr uintptr_t RVA_DYN_GET_SPIN = 0x12C5C90; // game+0x1412C5C90, slot 0x2B
 constexpr uintptr_t RVA_DYN_GET_ROWS = 0x12CBEB0; // game+0x1412CBEB0, slot 0x2E0: right, up, forward rows at dyn-0x380
 constexpr uintptr_t RVA_DYN_SET_VEL  = 0x12E3CF0; // game+0x1412E3CF0, slot 0x290: SetVelocity(dyn, const float4*)
 constexpr uintptr_t RVA_DYN_SET_SPIN = 0x12DD910; // game+0x1412DD910, slot 0x2C0: SetAngularVelocity(dyn, const float4*)
+constexpr uintptr_t RVA_SET_CAMERA   = 0xFE5780;  // game+0x140FE5780: CMultiCam::SetActiveCamera(int), for the camera probe
 constexpr ptrdiff_t CAR_DYN = 0x4C08, CAR_KIND = 0x4D08;
 constexpr ptrdiff_t DYN_POS = -0x390, DYN_ROWS = -0x380, DYN_VEL = -0x350, DYN_SPIN = -0x340;
 
@@ -98,6 +99,9 @@ const FH2HudInterface* g_hud;      // null: no HUD layer on this platform, and n
 const FH2PadInterface* g_padlayer; // null: no pad layers, so the game sees d-pad up with LB too
 bool g_canvas;                     // the platform took the flight instruments' canvas (HUD layer interface 3)
 std::atomic<int> g_hud_mode{2};    // the Flight HUD row: 0 off, 1 labels, 2 instruments
+int g_camera_probe;                 // [Debug] CameraProbe=1: log every change of the game's camera, and who asked
+std::atomic<float> g_up_y{1};       // the car's roof against the sky, 1 upright and -1 on its roof (for the probe)
+std::atomic<uint32_t> g_buttons{0}; // the controller's buttons, as XInput has them (for the probe)
 std::atomic<DWORD> g_flown{0};      // GetTickCount at the car's last update with flight on: none for a while = paused
 std::atomic<float> g_volume{0.6f};  // the Warning sounds row, 0 to 1
 wchar_t g_sounds[MAX_PATH];         // fh2-mods\DoABarrelRoll\sounds\, beside this DLL
@@ -179,6 +183,7 @@ __attribute__((noinline)) void fly(void* car, float dt) {
     g_heading.store(flight::heading(b.forward), std::memory_order_relaxed);
     g_thrust.store(in.throttle, std::memory_order_relaxed);
     g_flown.store(GetTickCount(), std::memory_order_relaxed);
+    g_up_y.store(b.up.y, std::memory_order_relaxed);
 
     alignas(16) const float nv[4] = {b.vel.x, b.vel.y, b.vel.z, v[3]};
     alignas(16) const float nw[4] = {b.spin.x, b.spin.y, b.spin.z, w[3]};
@@ -200,6 +205,48 @@ uint64_t d_update(void* car, float dt, float b, uint64_t d) {
     const uint64_t r = o_update(car, dt, b, d);
     if (g_flying.load(std::memory_order_relaxed)) fly_guarded(car, dt);
     return r;
+}
+
+// ---- the camera probe (only with CameraProbe=1 under [Debug] in the ini) -------------------------------------------
+
+// Something in the game takes the camera out of an in-car view when the car rolls. To find what, this logs each
+// change of the game's camera (CMultiCam::SetActiveCamera, hooked only while the probe is on) with what the car
+// was doing and the game code the call came from: the return addresses on the stack that point into the game.
+using SetCameraFn = uint64_t (*)(void* multicam, int index);
+SetCameraFn o_set_camera;
+
+uint64_t d_set_camera(void* multicam, int index) {
+    static std::atomic<int> last{-1}, lines{0};
+    const int was = last.exchange(index);
+    if (was != index && lines.fetch_add(1) < 300) {
+        static const char* const kNames[] = {"FollowCam", "FollowCam2", "DriverCam", "Hood", "BumperHigh"};
+        const uintptr_t lo = reinterpret_cast<uintptr_t>(g_base) + 0x1000, hi = reinterpret_cast<uintptr_t>(g_base) + 0x1DB4000;
+        const uintptr_t* sp = static_cast<const uintptr_t*>(__builtin_frame_address(0));
+        char callers[8 * 20] = "";
+        for (int i = 1, n = 0; i < 120 && n < 8; ++i)
+            if (sp[i] >= lo && sp[i] < hi) {
+                std::snprintf(callers + std::strlen(callers), 20, " game+0x%llX", 0x140000000ull + (sp[i] - reinterpret_cast<uintptr_t>(g_base)));
+                ++n;
+            }
+        logf("Camera probe: camera %d -> %d (%s); flight %s, roof %+.2f, %d km/h, RB %s, game time %s; from%s", was, index,
+             index >= 0 && index < 5 ? kNames[index] : index == 16 ? "PhotoMode" : index == 17 ? "RearView" : "another",
+             g_flying.load() ? "on" : "off", static_cast<double>(g_up_y.load()), static_cast<int>(std::lround(g_speed.load() * 3.6f)),
+             (g_buttons.load() & XINPUT_GAMEPAD_RIGHT_SHOULDER) ? "held" : "up", GetTickCount() - g_flown.load() < 300 ? "running" : "stopped",
+             callers);
+    }
+    return o_set_camera(multicam, index);
+}
+
+void camera_probe_start() {
+    if (!g_camera_probe) return;
+    if (std::memcmp(g_base + RVA_SET_CAMERA, "\x40\x53\x57\x41\x56\x48\x83\xEC\x20\x48\x8B\x81\x90\x01\x00\x00", 16) != 0) {
+        logf("Camera probe: the game's code at game+0x%llX doesn't match, so the probe is off.", 0x140000000ull + RVA_SET_CAMERA);
+        return;
+    }
+    FH2Hook* h = g_api->hook_function(g_mod, "CMultiCam::SetActiveCamera (camera probe)", g_base + RVA_SET_CAMERA,
+                                      reinterpret_cast<void*>(&d_set_camera), reinterpret_cast<void**>(&o_set_camera));
+    if (h && g_api->enable_hooks(g_mod, h)) logf("Camera probe: on (CameraProbe=1 in DoABarrelRoll.ini). Each change of the game's camera is logged.");
+    else logf("Camera probe: its hook couldn't go in, so the probe is off.");
 }
 
 bool code_ok() {
@@ -435,6 +482,7 @@ DWORD WINAPI worker(void*) {
         return 0;
     }
     g_ready.store(true);
+    camera_probe_start();
     logf("Ready: the car's physics checked and hooked. Turn flight on with the Flight row or its hotkey.");
 
     HMODULE x = LoadLibraryExW(L"xinput1_4.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -466,6 +514,7 @@ DWORD WINAPI worker(void*) {
                 if (get(i, &st) == ERROR_SUCCESS) pad = i, have = true;
         }
         if (!have) st = XINPUT_STATE{};
+        g_buttons.store(st.Gamepad.wButtons, std::memory_order_relaxed);
         g_stick_x.store(axis(st.Gamepad.sThumbLX), std::memory_order_relaxed);
         g_stick_y.store(axis(st.Gamepad.sThumbLY), std::memory_order_relaxed);
         g_rt.store(st.Gamepad.bRightTrigger / 255.0f, std::memory_order_relaxed);
@@ -502,8 +551,10 @@ void save_ini() {
                         "FlightKey=%u\n; Held with it: 1 Ctrl, 2 Shift, 4 Alt, added together\nFlightModifiers=%u\n"
                         "; The controller buttons, held together, as XInput bits (257 = LB+d-pad up; 0 = none)\n"
                         "FlightPad=%u\n\n"
-                        "[Updates]\n; 0: don't check GitHub for a newer version when the game starts\nCheckUpdates=%d\n",
-                     g_simple.load() ? 1 : 0, g_hud_mode.load(), static_cast<int>(std::lround(g_volume.load() * 100)), g_vk, g_mods, g_pad, g_check_updates);
+                        "[Updates]\n; 0: don't check GitHub for a newer version when the game starts\nCheckUpdates=%d\n\n"
+                        "[Debug]\n; 1: log each change of the game's camera and the game code that asked for it (for finding a fault)\n"
+                        "CameraProbe=%d\n",
+                     g_simple.load() ? 1 : 0, g_hud_mode.load(), static_cast<int>(std::lround(g_volume.load() * 100)), g_vk, g_mods, g_pad, g_check_updates, g_camera_probe);
         std::fclose(f);
     }
 }
@@ -560,6 +611,7 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     g_api = api;
     find_ini();
     g_check_updates = GetPrivateProfileIntW(L"Updates", L"CheckUpdates", 1, g_ini) != 0;
+    g_camera_probe  = GetPrivateProfileIntW(L"Debug", L"CameraProbe", 0, g_ini) != 0;
     FH2ModInfo info{};
     info.size             = sizeof info;
     info.name             = "Do A Barrel Roll";
