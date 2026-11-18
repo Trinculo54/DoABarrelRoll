@@ -67,8 +67,10 @@ inline std::string num(float v) {
     return b;
 }
 
-constexpr const char* kLine   = "#FFF5F5F5";   // the HUD's white
-constexpr const char* kOrange = "#FFFE5723";   // the game's orange: what's fixed to the car
+// One colour for everything drawn, the green of a real head-up display. kMark is what's fixed to the car (its
+// symbol, the pointers, the boxes round the numbers), kept apart in case it should stand out again.
+constexpr const char* kLine   = "#FF39FF6A";
+constexpr const char* kMark = kLine;
 constexpr const char* kGlass  = "#66101418";
 constexpr const char* kSmall  = "A_Style_FZTextBlock_HudSmall";
 constexpr const char* kMedium = "A_Style_FZTextBlock_HudMedium";
@@ -123,10 +125,10 @@ inline std::string window_open(float x, float y, float w, float h, float left, f
 }
 constexpr const char* kStripClose = "</Grid>\n</Canvas>\n";   // then what's fixed in the window, then </Grid>
 
-// The box a tape's or the compass's number sits in: darker glass with an orange edge.
+// The box a tape's or the compass's number sits in: darker glass with an edge.
 inline std::string readout(float x, float y, float w, float h, int text) {
     return "<Grid" + at(x, y, w, h) + ">\n<local:FZMaterial Preset=\"{DynamicResource A_FZMaterialPresetGlassRoundtangle_HudItem}\" Color=\"#F0101418\" />\n" +
-           "<Border BorderThickness=\"2\" BorderBrush=\"" + kOrange + "\" />\n<local:FZTextBlock Style=\"{StaticResource " + kMedium +
+           "<Border BorderThickness=\"2\" BorderBrush=\"" + kMark + "\" />\n<local:FZTextBlock Style=\"{StaticResource " + kMedium +
            "}\" Text=\"{Binding T" + std::to_string(text) + "}\" Color=\"" + kLine + "\" HorizontalAlignment=\"Center\" VerticalAlignment=\"Center\" />\n</Grid>\n";
 }
 
@@ -160,7 +162,7 @@ inline std::string xaml() {
         x += kStripClose;
         // fixed to the car: its symbol on the window's middle, and the bank scale over it (0, 10, 20, 30, 45 and 60
         // degrees each way)
-        x += box(150, 208, 70, 4, kOrange) + box(300, 208, 70, 4, kOrange) + box(256, 206, 8, 8, kOrange);
+        x += box(150, 208, 70, 4, kMark) + box(300, 208, 70, 4, kMark) + box(256, 206, 8, 8, kMark);
         Lines scale;
         for (const int a : {-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60}) {
             const float s = std::sin(static_cast<float>(a) / 57.29578f), c = std::cos(static_cast<float>(a) / 57.29578f);
@@ -174,7 +176,7 @@ inline std::string xaml() {
         Lines pointer;
         pointer.add(251, 40, 260, 24);
         pointer.add(260, 24, 269, 40);
-        x += pointer.path(kOrange, 3) + "</Grid>\n</Grid>\n";
+        x += pointer.path(kMark, 3) + "</Grid>\n</Grid>\n";
     }
 
     // ---- the speed tape, left of the horizon: 0 km/h at the strip's foot, its top kSpeedMax ------------------------
@@ -227,7 +229,7 @@ inline std::string xaml() {
             std::snprintf(two, sizeof two, "%02d", h / 10);
             x += label(px - 24, 18, 48, 28, h == 0 ? "N" : h == 90 ? "E" : h == 180 ? "S" : h == 270 ? "W" : two, "Center");
         }
-        x += ticks.path(kLine, 2) + kStripClose + box(298, 0, 4, 18, kOrange) + "</Grid>\n";
+        x += ticks.path(kLine, 2) + kStripClose + box(298, 0, 4, 18, kMark) + "</Grid>\n";
         x += readout(915, 172, 90, 38, kHeadingText);
     }
 

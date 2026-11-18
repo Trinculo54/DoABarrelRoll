@@ -92,13 +92,13 @@ The flight HUD
 ~~~~~~~~~~~~~~
 
 While flight is on, the screen has flight instruments, drawn in the
-game's own HUD:
+game's own HUD in the green of a real head-up display:
 
-  - an artificial horizon round the middle of the screen. The long white
-    line is the horizon, the short lines are every 5 degrees of pitch,
-    and the orange marks in the middle are your car. It turns against
-    your bank and slides with your pitch, as a plane's does. The marks
-    along its top are the bank scale, with an orange pointer;
+  - an artificial horizon round the middle of the screen. The long line
+    is the horizon, the short lines are every 5 degrees of pitch, and
+    the two bars and the dot in the middle are your car. It turns
+    against your bank and slides with your pitch, as a plane's does.
+    The marks along its top are the bank scale, with a pointer under it;
   - a speed tape on its left, in km/h, with the throttle as a bar
     beside it;
   - a height tape on its right, in the game world's own metres, with
