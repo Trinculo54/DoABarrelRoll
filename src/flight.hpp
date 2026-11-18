@@ -21,9 +21,10 @@ inline float len(V3 a) { return std::sqrt(dot(a, a)); }
 inline float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
 // What the player is doing: the left stick (-1..1, up and right positive), the triggers (0..1) and, for simple
-// controls, the roll buttons (LB -1, RB +1, neither or both 0).
+// controls, whether the roll button (LB: the clutch, which does nothing in the air) is held.
 struct Controls {
-    float stick_x, stick_y, throttle, brake, roll;
+    float stick_x, stick_y, throttle, brake;
+    bool roll;
 };
 
 // The car's state, as the game keeps it: its axes, velocity (m/s) and spin (rad/s), all in the world.
@@ -48,7 +49,8 @@ constexpr float kAirBrake    = 0.6f;   // fraction of speed lost per second at f
 // One update of `dt` seconds: the new velocity and spin (the game moves the car with them).
 // Plane controls: the stick pitches and rolls, and lift is along the car's roof, so a turn is a roll and a pull.
 // Simple controls: the stick pitches and turns; the car banks into the turn and levels out by itself, lift always
-// points at the sky (a banked or upside-down car doesn't sink), and LB and RB roll it for a barrel roll.
+// points at the sky (a banked or upside-down car doesn't sink). With LB held the stick rolls it instead, for a
+// barrel roll, and nothing levels it.
 inline void step(Body& b, const Controls& c, float dt, bool simple) {
     // 0 below kStickSpeed (the car drives as without the mod), 1 from kFlySpeed: how much it flies.
     const float air = clamp01((len(b.vel) - kStickSpeed) / (kFlySpeed - kStickSpeed));
@@ -57,11 +59,11 @@ inline void step(Body& b, const Controls& c, float dt, bool simple) {
     const V3 sky{0, 1, 0};
     V3 want    = cross(b.forward, b.up) * (-c.stick_y * kPitchRate);
     float roll = c.stick_x * kRollRate;
-    if (simple) {
-        roll = c.roll * kRollRate;
+    if (simple && !c.roll) {
+        roll = 0;
         // Over the top of a loop (roof down, stick held) the car is left to finish it rather than rolled upright.
         const bool looping = b.up.y < 0 && std::fabs(c.stick_y) > 0.5f;
-        if (c.roll == 0 && !looping) {
+        if (!looping) {
             const float pi = 3.14159265f;
             float off      = c.stick_x * kBank - std::atan2(-b.right.y, b.up.y); // the bank wanted less the bank now
             off            = off > pi ? off - 2 * pi : off < -pi ? off + 2 * pi : off;

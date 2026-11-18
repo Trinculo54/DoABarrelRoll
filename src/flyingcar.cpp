@@ -75,7 +75,8 @@ std::atomic<bool> g_ready{false};  // the hook is in
 std::atomic<bool> g_flying{false}; // flight is on
 std::atomic<bool> g_fault{false};  // the flight model faulted once (caught): off for the session
 std::atomic<bool> g_simple{true};  // simple controls (the stick turns) rather than a plane's (the stick rolls)
-std::atomic<float> g_stick_x{0}, g_stick_y{0}, g_throttle{0}, g_brake{0}, g_roll{0};
+std::atomic<float> g_stick_x{0}, g_stick_y{0}, g_throttle{0}, g_brake{0};
+std::atomic<bool> g_roll{false};   // LB is held: the stick rolls
 wchar_t g_ini[MAX_PATH];
 uint32_t g_vk, g_mods, g_pad; // the flight hotkey, as saved
 
@@ -235,9 +236,7 @@ DWORD WINAPI worker(void*) {
         g_stick_y.store(axis(st.Gamepad.sThumbLY), std::memory_order_relaxed);
         g_throttle.store(st.Gamepad.bRightTrigger / 255.0f, std::memory_order_relaxed);
         g_brake.store(st.Gamepad.bLeftTrigger / 255.0f, std::memory_order_relaxed);
-        const WORD held = st.Gamepad.wButtons;
-        g_roll.store(static_cast<float>(!!(held & XINPUT_GAMEPAD_RIGHT_SHOULDER) - !!(held & XINPUT_GAMEPAD_LEFT_SHOULDER)),
-                     std::memory_order_relaxed);
+        g_roll.store((st.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0, std::memory_order_relaxed);
     }
 }
 
@@ -249,7 +248,7 @@ void on_hotkey(void*, const char*) { set_flying(!g_flying.load(), "the hotkey");
 // Writes fh2-mods\FlyingCar.ini whole, from what the rows say now. On the UI thread (a row or a binding changed).
 void save_ini() {
     if (FILE* f = _wfopen(g_ini, L"w")) {
-        std::fprintf(f, "[Flight]\n; 1: simple controls (the stick turns the car, LB and RB roll it). 0: a plane's (the stick rolls)\n"
+        std::fprintf(f, "[Flight]\n; 1: simple controls (the stick turns the car; with LB held it rolls). 0: a plane's (the stick rolls)\n"
                         "Simple=%d\n\n"
                         "[Keys]\n; The key that turns flight on and off, as a Windows key code (120 = F9; 0 = none)\n"
                         "FlightKey=%u\n; Held with it: 1 Ctrl, 2 Shift, 4 Alt, added together\nFlightModifiers=%u\n"
@@ -262,7 +261,7 @@ void save_ini() {
 
 void on_simple_row(void*, const char*, int value) {
     g_simple.store(value != 0);
-    logf("Simple controls are %s.", value ? "on: the stick turns the car, and LB and RB roll it" : "off: the stick rolls the car, as a plane's does");
+    logf("Simple controls are %s.", value ? "on: the stick turns the car, and rolls it while LB is held" : "off: the stick rolls the car, as a plane's does");
     save_ini();
 }
 
@@ -294,7 +293,7 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     info.platform_version = FH2MOD_PLATFORM_VERSION;
     info.description      = "Your car flies like a plane. Turn flight on with F9 or LB+RB+d-pad up, get above 144 km/h "
                             "and pull back on the left stick. Back climbs, forward dives, left and right turn. RT is "
-                            "thrust, LT an air brake, LB and RB roll. Offline only.";
+                            "thrust, LT an air brake; hold LB and the stick rolls. Offline only.";
     info.offline_only     = 1;
     g_mod = api->register_mod(&info);
     if (!g_mod) return 0;
@@ -318,9 +317,9 @@ FH2MOD_EXPORT int fh2mod_init(const FH2ModApi* api) {
     simple.size        = sizeof simple;
     simple.key         = "Simple";
     simple.label       = "Simple controls";
-    simple.description = "On: left and right on the stick turn the car. It banks and levels out by itself, and LB and RB "
-                         "roll it for a barrel roll. Off: left and right roll the car, as a plane's stick does, and you "
-                         "turn by rolling and pulling back.";
+    simple.description = "On: left and right on the stick turn the car. It banks and levels out by itself; hold LB and "
+                         "the stick rolls it, for a barrel roll. Off: left and right roll the car, as a plane's stick "
+                         "does, and you turn by rolling and pulling back.";
     simple.value       = g_simple.load() ? 1 : 0;
     simple.on_change   = &on_simple_row;
     api->add_setting(g_mod, &simple);

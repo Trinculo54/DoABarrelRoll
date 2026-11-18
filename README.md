@@ -16,7 +16,7 @@ A mod for Forza Horizon 2 on PC (Azimuth) that lets your car take off and fly li
 | Left stick back (down) | Nose up: climb, and hold it for a loop |
 | Left stick forward (up) | Nose down: dive |
 | Left stick left or right | Turn. The car banks into the turn and levels out when you let go |
-| LB, RB | Roll left, roll right: hold one for a barrel roll |
+| LB held, left stick left or right | Roll: keep it there for a barrel roll. Let go of LB and the car levels out |
 | RT | Thrust |
 | LT | Air brake |
 
@@ -39,6 +39,8 @@ and controller buttons. Simple controls and the key and buttons are saved in `fh
 ## Known limits
 
 - It reads the controller with XInput. The keyboard can turn flight on and off, but can't fly the car.
+- LB is the game's clutch. That does nothing in the air, but if you drive manual with clutch, holding LB on the
+  ground with flight on still works the clutch.
 - Pulling back near the ground at speed can tip the car over before it leaves the ground: lift off with a
   gentle pull.
 
